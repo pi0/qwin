@@ -102,6 +102,18 @@ kill_qemu() {
   fi
 }
 
+# Wait for a PID to exit, with a timeout in seconds. Returns 1 if timed out.
+wait_timeout() {
+  local pid="$1" timeout="$2" elapsed=0
+  while kill -0 "$pid" 2>/dev/null; do
+    (( elapsed >= timeout )) && return 1
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  wait "$pid" 2>/dev/null || true
+  return 0
+}
+
 # Detect if running inside a container (Docker, LXC, etc.)
 is_container() {
   [[ -f /.dockerenv ]] || grep -q '/docker\|/lxc' /proc/1/cgroup 2>/dev/null

@@ -177,6 +177,9 @@ QEMU_ARGS+=(
   -vnc "$VNC_DISPLAY"
   -serial stdio
 
+  # QEMU monitor (for graceful ACPI shutdown)
+  -monitor unix:/tmp/qemu-wincore-monitor.sock,server,nowait
+
   # Write PID for other scripts
   -pidfile "$PIDFILE"
 )
@@ -221,7 +224,7 @@ cleanup() {
     kill "$VIRTIOFSD_PID" 2>/dev/null
     wait "$VIRTIOFSD_PID" 2>/dev/null
   fi
-  rm -f "$PIDFILE" "$VIRTIOFSD_SOCK" /tmp/virtio-serial-wincore.sock
+  rm -f "$PIDFILE" "$VIRTIOFSD_SOCK" /tmp/virtio-serial-wincore.sock /tmp/qemu-wincore-monitor.sock
 }
 trap cleanup EXIT INT TERM
 
@@ -240,8 +243,12 @@ if [[ -d "$NOVNC_WEB" ]] && command -v websockify &>/dev/null; then
   log_dim "noVNC PID: $NOVNC_PID"
 fi
 
-# Launch VNC viewer
+# Launch VNC viewer (wait for VNC to be listening first)
 if command -v vncviewer &>/dev/null; then
+  for _ in $(seq 1 40); do
+    if bash -c "echo >/dev/tcp/127.0.0.1/${VNC_PORT}" 2>/dev/null; then break; fi
+    sleep 0.25
+  done
   log_info "Opening VNC viewer..."
   vncviewer "localhost:${VNC_PORT}" &>/dev/null &
 elif [[ "$(uname -s)" == "Darwin" ]]; then
@@ -285,11 +292,32 @@ if [[ "$FRESH_INSTALL" == true ]]; then
   echo ""
   log_ok "Windows installation complete!"
 
-  # Shut down the VM, create an overlay on top of the base, and reboot from overlay
+  # Shut down the VM gracefully so Windows flushes all writes to disk
   log_step "Creating overlay snapshot..."
-  log_info "Shutting down VM to snapshot the base disk..."
-  kill "$QEMU_PID" 2>/dev/null
-  wait "$QEMU_PID" 2>/dev/null || true
+  log_info "Sending ACPI shutdown to VM..."
+  # Send ACPI power button event via QEMU monitor socket
+  if command -v socat &>/dev/null; then
+    echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-wincore-monitor.sock 2>/dev/null || true
+  else
+    # Fallback: Python is almost always available
+    python3 -c "
+import socket, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect('/tmp/qemu-wincore-monitor.sock')
+time.sleep(0.5)  # wait for monitor prompt
+s.sendall(b'system_powerdown\n')
+time.sleep(0.5)
+s.close()
+" 2>/dev/null || true
+  fi
+
+  # Wait for QEMU to exit on its own (Windows handles ACPI power button → clean shutdown)
+  log_info "Waiting for VM to power off..."
+  if ! wait_timeout "$QEMU_PID" 120; then
+    log_warn "VM didn't shut down within 120s — force killing..."
+    kill "$QEMU_PID" 2>/dev/null
+    wait "$QEMU_PID" 2>/dev/null || true
+  fi
   # Remove trap temporarily — we handle cleanup manually here
   trap - EXIT INT TERM
 
@@ -302,7 +330,7 @@ if [[ "$FRESH_INSTALL" == true ]]; then
     kill "$VIRTIOFSD_PID" 2>/dev/null; wait "$VIRTIOFSD_PID" 2>/dev/null || true
     unset VIRTIOFSD_PID
   fi
-  rm -f "$PIDFILE" "$VIRTIOFSD_SOCK" /tmp/virtio-serial-wincore.sock
+  rm -f "$PIDFILE" "$VIRTIOFSD_SOCK" /tmp/virtio-serial-wincore.sock /tmp/qemu-wincore-monitor.sock
 
   bash scripts/06-create-overlay.sh
 
