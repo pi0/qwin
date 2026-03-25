@@ -43,7 +43,7 @@ function RefreshPath {
   $env:PATH = "$machine;$user"
 }
 
-$total = 11
+$total = 12
 
 # --- 1. VirtIO guest tools (installs NetKVM network driver — must come before any downloads) ---
 Step 1 $total 'Installing VirtIO guest tools'
@@ -182,7 +182,7 @@ catch {
 # --- 5. Install Git + Node.js via Chocolatey ---
 Step 5 $total 'Installing Git + Node.js'
 if (Get-Command choco -EA SilentlyContinue) {
-  choco install git nodejs-lts -y --no-progress 2>&1 | Out-File $log -Append
+  choco install git nodejs-lts winfsp TotalCommander -y --no-progress 2>&1 | Out-File $log -Append
   RefreshPath
   corepack enable 2>&1 | Out-File $log -Append
   Log "git: $(git --version 2>&1)"
@@ -193,8 +193,8 @@ else {
   Log 'Chocolatey not available, skipping Git + Node.js'
 }
 
-# --- 6. Install VirtIO-FS driver and mount Z:\ ---
-Step 6 $total 'Installing VirtIO-FS driver and mounting share'
+# --- 6. Install VirtIO-FS driver and create mount service ---
+Step 6 $total 'Installing VirtIO-FS driver and creating mount service'
 
 # Step 6a: Install viofs driver if needed
 $viofsInf = $null
@@ -212,16 +212,14 @@ foreach ($candidate in @(
 if ($viofsInf) {
   Log "Installing viofs driver from $viofsInf"
   pnputil /add-driver $viofsInf /install 2>&1 | Out-File $log -Append
-  # Force device rescan so Windows binds the driver to the VirtIO-FS PCI device
   pnputil /scan-devices 2>&1 | Out-File $log -Append
-  Start-Sleep -Seconds 3
   Log "viofs driver installed, device rescan done"
 }
 else {
   Log 'viofs.inf not found on any drive'
 }
 
-# Step 6b: Create and start VirtioFsSvc service
+# Step 6b: Register virtiofs with WinFsp Launcher and mount Z:\
 $virtiofsBin = $null
 foreach ($candidate in @(
   'C:\Program Files\Virtio-Win\VioFS\virtiofs.exe',
@@ -232,35 +230,53 @@ foreach ($candidate in @(
     break
   }
 }
-if ($virtiofsBin) {
-  if (-not (Get-Service VirtioFsSvc -EA SilentlyContinue)) {
-    sc.exe create VirtioFsSvc binpath= "`"$virtiofsBin`" -d Z: -m hostshare" start= auto 2>&1 | Out-File $log -Append
-    Log 'VirtioFsSvc service created'
-  }
-  # Retry starting the service — driver may need a moment to bind
-  $mounted = $false
-  for ($try = 1; $try -le 5; $try++) {
-    Start-Service VirtioFsSvc -EA SilentlyContinue
+$fsreg = 'C:\Program Files (x86)\WinFsp\bin\fsreg.bat'
+$launchctl = 'C:\Program Files (x86)\WinFsp\bin\launchctl-x64.exe'
+if ($virtiofsBin -and (Test-Path $fsreg)) {
+  # Register virtiofs as a WinFsp service (%1=tag, %2=mountpoint)
+  & $fsreg virtiofs $virtiofsBin '-d %2 -m %1' 2>&1 | Out-File $log -Append
+  Log "virtiofs registered with WinFsp Launcher"
+  # Mount immediately via launchctl
+  if (Test-Path $launchctl) {
+    & $launchctl start virtiofs hostshare Z: 2>&1 | Out-File $log -Append
     Start-Sleep -Seconds 3
     if (Test-Path 'Z:\') {
-      Log "Z:\ mounted successfully (attempt $try)"
-      $mounted = $true
-      break
+      Log "Z:\ mounted successfully via WinFsp Launcher"
     }
-    Log "Z:\ not yet available, retrying ($try/5)..."
-    Stop-Service VirtioFsSvc -Force -EA SilentlyContinue
-    Start-Sleep -Seconds 2
+    else {
+      Log "WARNING: Z:\ not available after launchctl start"
+    }
+    # Create scheduled task to auto-mount on every boot
+    $action = New-ScheduledTaskAction -Execute $launchctl -Argument 'start virtiofs hostshare Z:'
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
+    Register-ScheduledTask -TaskName 'VirtioFS-Mount' -Action $action -Trigger $trigger -Principal $principal -Force 2>&1 | Out-File $log -Append
+    Log 'VirtioFS-Mount scheduled task created (auto-mount Z:\ at boot)'
   }
-  if (-not $mounted) {
-    Log 'WARNING: Z:\ not available — VirtIO-FS may need a reboot to work'
-  }
+}
+elseif ($virtiofsBin) {
+  Log 'WinFsp not installed — cannot register virtiofs (install winfsp via Chocolatey)'
 }
 else {
   Log 'virtiofs.exe not found'
 }
 
-# --- 7. Disable unnecessary services ---
-Step 7 $total 'Disabling unnecessary services'
+# --- 7. Configure Task Manager at logon (expanded mode) ---
+Step 7 $total 'Configuring Task Manager startup'
+reg add 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' /v TaskManager /t REG_SZ /d 'taskmgr.exe' /f 2>&1 | Out-File $log -Append
+# Default to expanded/details view instead of compact summary
+$tmKey = 'HKCU\Software\Microsoft\Windows\CurrentVersion\TaskManager'
+reg add $tmKey /v UseStatusSetting /t REG_DWORD /d 1 /f 2>&1 | Out-File $log -Append
+# Total Commander as default file manager at logon
+$tcExe = 'C:\Program Files\totalcmd\TOTALCMD64.EXE'
+if (Test-Path $tcExe) {
+  reg add 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' /v TotalCommander /t REG_SZ /d "`"$tcExe`"" /f 2>&1 | Out-File $log -Append
+  Log 'Total Commander set to launch at logon'
+}
+Log 'Task Manager set to launch at logon (expanded mode)'
+
+# --- 8. Disable unnecessary services ---
+Step 8 $total 'Disabling unnecessary services'
 $disableServices = @(
   'DiagTrack',            # Telemetry
   'UsoSvc',               # Update Orchestrator
@@ -284,8 +300,8 @@ foreach ($svc in $disableServices) {
   }
 }
 
-# --- 8. Disk cleanup (must run BEFORE Defender removal — that triggers pending reboot which blocks DISM) ---
-Step 8 $total 'Cleaning up disk'
+# --- 9. Disk cleanup (must run BEFORE Defender removal — that triggers pending reboot which blocks DISM) ---
+Step 9 $total 'Cleaning up disk'
 # WinSxS component store (~1.3 GB)
 Dism /Online /Cleanup-Image /StartComponentCleanup /ResetBase 2>&1 | Out-File $log -Append
 Log "WinSxS cleanup done"
@@ -317,8 +333,8 @@ Log "Speech engines removed"
 Remove-Item 'C:\Program Files\Windows Defender Advanced Threat Protection' -Recurse -Force -EA SilentlyContinue
 Log "Defender ATP removed"
 
-# --- 9. Uninstall Windows Defender (~137 MB RAM, ~90 MB disk; requires reboot to fully remove) ---
-Step 9 $total 'Removing Windows Defender'
+# --- 10. Uninstall Windows Defender (~137 MB RAM, ~90 MB disk; requires reboot to fully remove) ---
+Step 10 $total 'Removing Windows Defender'
 try {
   Uninstall-WindowsFeature Windows-Defender 2>&1 | Out-File $log -Append
   Log 'Windows Defender uninstalled (takes effect after reboot)'
@@ -327,8 +343,8 @@ catch {
   Log "Defender removal failed: $_"
 }
 
-# --- 10. Zero free space (allows qcow2 compaction on host) ---
-Step 10 $total 'Zeroing free space for disk compaction'
+# --- 11. Zero free space (allows qcow2 compaction on host) ---
+Step 11 $total 'Zeroing free space for disk compaction'
 $zeroFile = 'C:\zero.tmp'
 try {
   # Write zeros to fill free space, then delete — makes qcow2 sparse regions detectable
@@ -347,8 +363,8 @@ finally {
 Remove-Item $zeroFile -Force -EA SilentlyContinue
 Log 'Free space zeroed'
 
-# --- 11. Done ---
-Step 11 $total 'Setup complete'
+# --- 12. Done ---
+Step 12 $total 'Setup complete'
 Log 'All setup steps finished'
 # Write completion marker — host waits for this via WinRM before declaring "complete"
 Set-Content -Path 'C:\setup-complete.flag' -Value 'done'

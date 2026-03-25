@@ -9,12 +9,15 @@ Out of the box, the VM comes pre-configured with:
 - **OpenSSH Server** — SSH into the VM from your terminal or attach a VS Code remote session
 - **Dev-ready** — Git, Node.js LTS, and Corepack pre-installed so you can `git clone` and start coding inside it
 - **Lean image** — Defender removed, firewall disabled, WinSxS cleaned, free space zeroed for qcow2 compaction
-- **VirtIO guest tools** — optimized storage/network drivers and memory balooning
-- **VirtIO-FS** — shared host directory mounted as `Z:\` in the guest
+- **VirtIO guest tools** — optimized storage/network drivers and memory ballooning
+- **VirtIO-FS** — shared host directory mounted as `Z:\` in the guest (via WinFsp)
+- **Total Commander** — file manager, launches at logon
 - **Serial console (EMS)** — for headless debugging
 - **noVNC web console** — browser-based VNC viewer, auto-opens during build
 
 ## Prerequisites
+
+> **Note:** Linux is the primary and well-tested platform. macOS support is experimental and unstable — expect slower builds (no KVM) and missing features (no VirtIO-FS shared directories).
 
 ### Linux
 
@@ -71,10 +74,10 @@ You can force a specific mode:
 
 3. **Connect once installation completes:**
    - **VNC:** `localhost:5900` (macOS opens Screen Sharing automatically; Linux uses `vncviewer`)
-   - **Web console:** `http://localhost:6080` (Linux with noVNC installed)
+   - **Web console:** `http://localhost:16080` (Linux with noVNC installed)
    - **SSH:** `ssh administrator@localhost -p 2222`
-   - **RDP:** `localhost:3389`
-   - **WinRM:** `localhost:5985`
+   - **RDP:** `localhost:13389`
+   - **WinRM:** `localhost:15985`
 
 All ports are bound to `127.0.0.1` (localhost only).
 
@@ -94,10 +97,10 @@ All settings are in `.env` (see `.env.example`):
 | `RAM_MB` | `4096` | VM RAM in MB |
 | `CPU_CORES` | `2` | VM CPU cores |
 | `VNC_DISPLAY` | `:0` | VNC display number |
-| `HOST_RDP_PORT` | `3389` | Host port for RDP |
-| `HOST_WINRM_PORT` | `5985` | Host port for WinRM |
+| `HOST_RDP_PORT` | `13389` | Host port for RDP |
+| `HOST_WINRM_PORT` | `15985` | Host port for WinRM |
 | `HOST_SSH_PORT` | `2222` | Host port for SSH |
-| `HOST_NOVNC_PORT` | `6080` | Host port for noVNC web console |
+| `HOST_NOVNC_PORT` | `16080` | Host port for noVNC web console |
 | `SHARED_DIR` | `./shared` | Host directory shared into guest as `Z:\` |
 | `SSH_PUBKEY` | *(empty)* | Path to SSH public key for passwordless login |
 
@@ -142,7 +145,8 @@ The build is tuned for fast installation:
 - **VirtIO-FS** with `virtiofsd` (Linux only) — near-native shared filesystem via `vhost-user-fs-pci` and shared memory (`memfd`)
 - **VirtIO serial** — fast guest-host communication channel
 - **Chocolatey package manager** — reliable on Server Core (winget requires App Installer/Store framework which is unavailable)
+- **WinFsp** — enables VirtIO-FS filesystem mount (`virtiofs.exe` requires WinFsp DLL)
 
 ## Monitoring
 
-During installation you can watch progress via the noVNC web console (opens automatically) or any VNC client on port 5900. The post-install steps show status in the PowerShell window title (e.g. `[3/9] Installing VirtIO guest tools`). Detailed logs are written to `C:\setup.log` inside the VM.
+During installation you can watch progress via the noVNC web console (opens automatically) or any VNC client on port 5900. The post-install steps show status in the PowerShell window title (e.g. `[3/12] Installing OpenSSH Server`). Detailed logs are written to `C:\setup.log` inside the VM.

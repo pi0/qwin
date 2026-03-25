@@ -23,15 +23,15 @@ Docker + QEMU project for running Windows Server Core with fully unattended inst
 - Config via `.env` file (see `.env.example`)
 - KVM auto-detected at runtime (`/dev/kvm`), falls back to TCG (always TCG on macOS)
 - macOS support: `mkisofs` (cdrtools) instead of `genisoimage`, `aio=threads` instead of `io_uring`, no VirtIO-FS, Screen Sharing for VNC
-- Ports: 3389 (RDP), 5985 (WinRM), 5900 (VNC), 2222 (SSH)
+- Default host ports: 13389 (RDP), 15985 (WinRM), 5900 (VNC), 2222 (SSH), 16080 (noVNC)
 - `images/` dir holds all artifacts (ISO, qcow2 disk, answer ISO, virtio ISO) — gitignored
 - VirtIO devices: balloon (memory), serial (guest-host channel), virtio-fs (shared directory)
 - VirtIO-FS (Linux only): `virtiofsd` runs on host, shares `SHARED_DIR` (default `./shared`) → guest `Z:\` via `vhost-user-fs-pci`
 - On Linux with VirtIO-FS: QEMU uses `memory-backend-memfd` with `share=on` (required for vhost-user-fs); on macOS: plain memory
-- Guest-side `VirtioFsSvc` Windows service runs `virtiofs.exe -d Z: -m hostshare` (auto-start)
+- VirtIO-FS guest mount: `virtiofs.exe` is a WinFsp filesystem, NOT a plain Windows service. Requires `winfsp` package (installed via Chocolatey). Registered with WinFsp Launcher via `fsreg.bat` (`-d %2 -m %1`), mounted via `launchctl-x64.exe start virtiofs hostshare Z:`. A `VirtioFS-Mount` scheduled task (SYSTEM, at startup) handles auto-mount on boot.
 - OpenSSH Server: GitHub zip install (Add-WindowsCapability unavailable on Server Core)
 - SSH host keys: pre-generated at build time (`images/ssh-hostkeys/`), bundled in answer ISO, deployed to `%ProgramData%\ssh\` before sshd starts — fingerprints are stable across rebuilds (use `--clean` to regenerate)
-- Post-install (`setup.ps1`): WinRM, EMS/serial, VirtIO guest tools, viofs driver + mount, Chocolatey + Git + Node.js, then cleanup (Defender removal, service disable, WinSxS cleanup, temp/IME purge)
+- Post-install (`setup.ps1`): WinRM, EMS/serial, VirtIO guest tools, viofs driver + mount, Chocolatey + Git + Node.js + WinFsp, then cleanup (Defender removal, service disable, WinSxS cleanup, temp/IME purge)
 - All setup steps log to `C:\setup.log` with timestamps and visible progress in VNC
 - `setup.ps1` is copied to `C:\` during specialize pass (answer ISO may be unmounted by first logon)
 
@@ -41,6 +41,8 @@ Docker + QEMU project for running Windows Server Core with fully unattended inst
 - **winget doesn't work on Server Core**: Requires App Installer/Microsoft Store framework. Use Chocolatey instead.
 - **PowerShell syntax in unattend scripts**: Avoid multi-line `+` string concatenation (PS treats line 1 as complete statement), em dashes/unicode in strings (encoding issues), `} catch {` on same line (put `catch`/`else` on own line after `}`), and `$var/` or `${var}:` in strings (PS treats `/` and `:` as drive/scope modifiers — use `$($var)` subexpressions instead).
 - **`Add-WindowsCapability -Online` for OpenSSH**: Fails on Server Core when CBS source is unavailable. Always have a fallback.
+- **VirtIO-FS requires WinFsp**: `virtiofs.exe` depends on `winfsp-x64.dll` (WinFsp). Without it, service starts but silently fails to mount. The VirtIO guest tools MSI installs its own `VirtioFsSvc` service (demand start, no args) which doesn't work — must use WinFsp Launcher (`fsreg.bat` + `launchctl-x64.exe`) instead.
+- **SSH default shell is cmd.exe**: When running PowerShell commands over SSH, wrap in `powershell -Command "..."`. Beware of `$` variable expansion by the local shell — use single quotes on the outer layer.
 
 ## Status
 

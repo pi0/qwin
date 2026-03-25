@@ -55,7 +55,7 @@ VNC_DISPLAY="${VNC_DISPLAY:-:0}"
 VNC_PORT=$(( 5900 + ${VNC_DISPLAY#:} ))
 
 HOST_VNC_PORT="${HOST_VNC_PORT:-$VNC_PORT}"
-HOST_NOVNC_PORT="${HOST_NOVNC_PORT:-6080}"
+HOST_NOVNC_PORT="${HOST_NOVNC_PORT:-16080}"
 
 echo ":: Starting container..."
 CONTAINER_NAME="wincore-$$"
@@ -66,9 +66,9 @@ docker run --rm -d --name "$CONTAINER_NAME" \
   ${SHARED_ARGS[@]+"${SHARED_ARGS[@]}"} \
   ${SSH_ARGS[@]+"${SSH_ARGS[@]}"} \
   -v "$PROJECT_ROOT/images:/opt/winvm/images" \
-  -p "127.0.0.1:${HOST_RDP_PORT:-3389}:${HOST_RDP_PORT:-3389}" \
-  -p "127.0.0.1:${HOST_WINRM_PORT:-5985}:${HOST_WINRM_PORT:-5985}" \
-  -p "127.0.0.1:${HOST_SSH_PORT:-2222}:${HOST_SSH_PORT:-2222}" \
+  -p "127.0.0.1:${HOST_RDP_PORT:-13389}:3389" \
+  -p "127.0.0.1:${HOST_WINRM_PORT:-15985}:5985" \
+  -p "127.0.0.1:${HOST_SSH_PORT:-2222}:22" \
   -p "127.0.0.1:${HOST_VNC_PORT}:${VNC_PORT}" \
   -p "127.0.0.1:${HOST_NOVNC_PORT}:6080" \
   "$IMAGE_NAME" "$@" >/dev/null

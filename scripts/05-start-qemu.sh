@@ -20,9 +20,16 @@ elif [[ ! -f "$WIN_ISO" || ! -f "$ANSWER_ISO" || ! -f "$VIRTIO_ISO" ]]; then
 fi
 
 # Host ports (configurable to avoid conflicts)
-HOST_RDP_PORT="${HOST_RDP_PORT:-3389}"
-HOST_WINRM_PORT="${HOST_WINRM_PORT:-5985}"
-HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
+# Inside a container, QEMU binds to standard ports (Docker handles the host mapping)
+if is_container; then
+  HOST_RDP_PORT=3389
+  HOST_WINRM_PORT=5985
+  HOST_SSH_PORT=22
+else
+  HOST_RDP_PORT="${HOST_RDP_PORT:-13389}"
+  HOST_WINRM_PORT="${HOST_WINRM_PORT:-15985}"
+  HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
+fi
 
 # Shared directory for virtio-fs (host → guest Z:\)
 SHARED_DIR="${SHARED_DIR:-$PROJECT_ROOT/shared}"
@@ -212,11 +219,16 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Launch noVNC web interface if available
-NOVNC_PORT="${NOVNC_PORT:-6080}"
+# Inside a container, bind to 6080 (Docker maps HOST_NOVNC_PORT → 6080)
+if is_container; then
+  _NOVNC_BIND=6080
+else
+  _NOVNC_BIND="${HOST_NOVNC_PORT:-16080}"
+fi
 NOVNC_WEB="${NOVNC_WEB:-/usr/share/novnc}"
 if [[ -d "$NOVNC_WEB" ]] && command -v websockify &>/dev/null; then
-  log_info "Starting noVNC on port ${NOVNC_PORT}..."
-  websockify --web="$NOVNC_WEB" "$NOVNC_PORT" "localhost:${VNC_PORT}" &>/dev/null &
+  log_info "Starting noVNC on port ${_NOVNC_BIND}..."
+  websockify --web="$NOVNC_WEB" "$_NOVNC_BIND" "localhost:${VNC_PORT}" &>/dev/null &
   NOVNC_PID=$!
   log_dim "noVNC PID: $NOVNC_PID"
 fi
@@ -294,7 +306,7 @@ log_info "SSH:   ssh administrator@localhost -p ${HOST_SSH_PORT}"
 log_info "WinRM: localhost:${HOST_WINRM_PORT}"
 log_info "VNC:   localhost:${VNC_PORT}"
 if [[ -n "${NOVNC_PID:-}" ]]; then
-  log_info "Web:   http://localhost:${NOVNC_PORT}/vnc.html?autoconnect=true"
+  log_info "Web:   http://localhost:${HOST_NOVNC_PORT}/vnc.html?autoconnect=true"
 fi
 echo ""
 log_info "Press Ctrl+C to stop the VM."

@@ -42,6 +42,51 @@ fi
 # --- Docker build ---
 _log_info "Building via Docker"
 
+# Pre-check: ensure required ports are free
+_check_port() {
+  local port="$1" label="$2"
+  local pid_info=""
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    pid_info=$(lsof -iTCP:"$port" -sTCP:LISTEN -nP 2>/dev/null | awk 'NR>1{print $1 " (PID " $2 ")"}' | head -1)
+  else
+    pid_info=$(ss -tlnpH "sport = :$port" 2>/dev/null | sed -n 's/.*pid=\([0-9]*\).*,fd=.*/\1/p' | head -1)
+    if [[ -n "$pid_info" ]]; then
+      local pname
+      pname=$(ps -p "$pid_info" -o comm= 2>/dev/null || echo "unknown")
+      pid_info="$pname (PID $pid_info)"
+    fi
+  fi
+  if [[ -n "$pid_info" ]]; then
+    _log_error "Port $port ($label) is already in use by $pid_info"
+    _log_error "Free it or override with ${label}_PORT env var."
+    return 1
+  elif ss -tlnH "sport = :$port" 2>/dev/null | grep -q . || \
+       lsof -iTCP:"$port" -sTCP:LISTEN -nP &>/dev/null; then
+    _log_error "Port $port ($label) is already in use."
+    _log_error "Free it or override with ${label}_PORT env var."
+    return 1
+  fi
+}
+
+_ports_ok=true
+_check_port "${HOST_RDP_PORT:-13389}"   "HOST_RDP"   || _ports_ok=false
+_check_port "${HOST_WINRM_PORT:-15985}" "HOST_WINRM" || _ports_ok=false
+_check_port "${HOST_SSH_PORT:-2222}"    "HOST_SSH"    || _ports_ok=false
+_check_port "${HOST_NOVNC_PORT:-16080}"      "NOVNC"      || _ports_ok=false
+
+if [[ "$_ports_ok" != true ]]; then
+  # List running QEMU/KVM/docker instances to help identify the culprit
+  _instances=$(ps -eo pid,user,args 2>/dev/null | grep -E 'qemu-system|kvm|docker run' | grep -v grep || true)
+  if [[ -n "$_instances" ]]; then
+    echo ""
+    _log_error "Running QEMU/KVM/Docker instances:"
+    echo "$_instances" | while read -r line; do
+      _log_error "  $line"
+    done
+  fi
+  exit 1
+fi
+
 IMAGE_NAME="${DOCKER_IMAGE:-wincore-builder}"
 
 # Build the Docker image
@@ -52,10 +97,10 @@ DOCKER_ARGS=(
   --rm -it
   --name wincore
   -v "$PROJECT_ROOT/images:/opt/winvm/images"
-  -p "${HOST_RDP_PORT:-3389}:3389"
-  -p "${HOST_WINRM_PORT:-5985}:5985"
+  -p "${HOST_RDP_PORT:-13389}:3389"
+  -p "${HOST_WINRM_PORT:-15985}:5985"
   -p "${HOST_SSH_PORT:-2222}:22"
-  -p "${NOVNC_PORT:-6080}:6080"
+  -p "${HOST_NOVNC_PORT:-16080}:6080"
 )
 
 # Pass through KVM if available
