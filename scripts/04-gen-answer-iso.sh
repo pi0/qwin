@@ -2,6 +2,20 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
+# Find ISO creation tool (genisoimage on Linux, mkisofs from cdrtools on macOS)
+if command -v genisoimage &>/dev/null; then
+  MKISO=genisoimage
+elif command -v mkisofs &>/dev/null; then
+  MKISO=mkisofs
+else
+  log_error "Required command not found: genisoimage (or mkisofs)"
+  case "$(uname -s)" in
+    Darwin) log_error "Install with: brew install cdrtools" ;;
+    Linux)  log_error "Install with: sudo apt install genisoimage  (or: sudo dnf install genisoimage)" ;;
+  esac
+  exit 1
+fi
+
 ANSWER_ISO="images/answer.iso"
 ANSWER_XML="images/Autounattend.xml"
 ANSWER_DIR="images/answer-staging"
@@ -39,7 +53,7 @@ else
 fi
 
 log_info "Creating answer ISO..."
-genisoimage \
+"$MKISO" \
   -o "$ANSWER_ISO" \
   -J -r \
   -V "ANSWER" \

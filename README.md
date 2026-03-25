@@ -16,8 +16,33 @@ Out of the box, the VM comes pre-configured with:
 
 ## Prerequisites
 
+### Linux
+
 - **QEMU** (for host builds) or **Docker** (for containerized builds) — `build.sh` auto-detects which is available
-- **KVM** strongly recommended — install runs in ~20-30 min with KVM vs 2-4 hours without. Note: macOS runtimes don't expose nested KVM yet, so installs will use software emulation.
+- **KVM** strongly recommended — install runs in ~20-30 min with KVM vs 2-4 hours without
+- `genisoimage` — for generating the answer ISO
+- `virtiofsd` — for shared directory support (VirtIO-FS)
+
+```bash
+# Debian/Ubuntu
+sudo apt install qemu-system-x86 genisoimage virtiofsd
+
+# Fedora
+sudo dnf install qemu-system-x86-core genisoimage virtiofsd
+
+# Arch
+sudo pacman -S qemu-system-x86 cdrtools virtiofsd
+```
+
+### macOS
+
+- **QEMU** and **cdrtools** (provides `mkisofs` for ISO generation)
+- No KVM — macOS uses software emulation (TCG), so expect slower installs
+- VirtIO-FS shared directories are not available (`virtiofsd` is Linux-only)
+
+```bash
+brew install qemu cdrtools
+```
 
 ## Quick Start
 
@@ -45,11 +70,11 @@ You can force a specific mode:
 ```
 
 3. **Connect once installation completes:**
-   - **Web console:** `http://localhost:6080` (opens automatically)
-   - **RDP:** `localhost:3389`
+   - **VNC:** `localhost:5900` (macOS opens Screen Sharing automatically; Linux uses `vncviewer`)
+   - **Web console:** `http://localhost:6080` (Linux with noVNC installed)
    - **SSH:** `ssh administrator@localhost -p 2222`
+   - **RDP:** `localhost:3389`
    - **WinRM:** `localhost:5985`
-   - **VNC:** `localhost:5900`
 
 All ports are bound to `127.0.0.1` (localhost only).
 
@@ -76,7 +101,7 @@ All settings are in `.env` (see `.env.example`):
 | `SHARED_DIR` | `./shared` | Host directory shared into guest as `Z:\` |
 | `SSH_PUBKEY` | *(empty)* | Path to SSH public key for passwordless login |
 
-## Shared Directory
+## Shared Directory (Linux only)
 
 The `shared/` directory on the host is mounted as `Z:\` inside the guest via VirtIO-FS — no network or SCP needed to pass files in and out. Just drop files into `./shared/` and they appear instantly at `Z:\` in the VM.
 
@@ -86,6 +111,8 @@ ssh administrator@localhost -p 2222 "type Z:\test.txt"
 ```
 
 Set `SHARED_DIR` in `.env` to change the host path.
+
+> **Note:** VirtIO-FS requires `virtiofsd`, which is Linux-only. On macOS, shared directories are not available — use SCP or RDP file transfer instead.
 
 ## Persistence
 
@@ -105,14 +132,14 @@ This wipes the virtual disk and regenerated config, but preserves downloaded ISO
 
 The build is tuned for fast installation:
 
-- **VirtIO disk** with `cache=unsafe` and `aio=io_uring` — dramatically faster I/O than IDE during Windows file extraction
+- **VirtIO disk** with `cache=unsafe` and `aio=io_uring` (Linux) / `aio=threads` (macOS) — dramatically faster I/O than IDE during Windows file extraction
 - **VirtIO storage drivers** loaded during windowsPE pass via the VirtIO ISO
 - **Windows Recovery disabled** — `reagentc /disable` during specialize skips RE partition
 - **Unnecessary services disabled** — Windows Search, SysMain, Windows Update, telemetry, MSDTC, IPsec
 - **Windows Defender fully removed** — saves ~137 MB RAM and ~90 MB disk (realtime disabled during install for speed)
 - **WinSxS component store cleaned** with `/ResetBase` — reclaims ~1.3 GB
 - **IME dictionaries removed** — Japanese/Chinese input not needed headless
-- **VirtIO-FS** with `virtiofsd` — near-native shared filesystem via `vhost-user-fs-pci` and shared memory (`memfd`)
+- **VirtIO-FS** with `virtiofsd` (Linux only) — near-native shared filesystem via `vhost-user-fs-pci` and shared memory (`memfd`)
 - **VirtIO serial** — fast guest-host communication channel
 - **Chocolatey package manager** — reliable on Server Core (winget requires App Installer/Store framework which is unavailable)
 

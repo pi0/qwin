@@ -11,5 +11,4 @@ fi
 
 log_info "Creating ${DISK_SIZE} qcow2 disk..."
 qemu-img create -f qcow2 "$DISK_PATH" "$DISK_SIZE"
-stamp_build
 log_ok "Disk ready: $DISK_PATH"

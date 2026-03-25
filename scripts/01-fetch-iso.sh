@@ -2,6 +2,8 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
+require_cmd curl
+
 ISO_PATH="images/windows.iso"
 
 # If WIN_ISO_URL is a local file path, symlink it

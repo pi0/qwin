@@ -25,9 +25,12 @@ log_step "Step 2/7: Fetch VirtIO drivers"
 bash scripts/01b-fetch-virtio.sh
 
 log_step "Step 3/7: Create disk"
-# Track whether disk already existed (= Windows already installed)
-DISK_EXISTED=false
-[[ -f images/windows.qcow2 ]] && DISK_EXISTED=true
+# A completed install is tracked by the build stamp, not just disk existence.
+# If disk exists but no stamp, it's a blank/failed disk — treat as fresh install.
+INSTALL_DONE=false
+if [[ -f images/windows.qcow2 && -f "$BUILD_STAMP" ]]; then
+  INSTALL_DONE=true
+fi
 bash scripts/02-create-disk.sh
 
 log_step "Step 4/7: Generate Autounattend.xml"
@@ -41,7 +44,7 @@ bash scripts/04-gen-answer-iso.sh
 
 log_step "Step 7/7: Start QEMU"
 export FRESH_INSTALL
-if [[ "$DISK_EXISTED" == true ]]; then
+if [[ "$INSTALL_DONE" == true ]]; then
   FRESH_INSTALL=false
 else
   FRESH_INSTALL=true

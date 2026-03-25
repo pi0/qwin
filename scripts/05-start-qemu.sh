@@ -2,6 +2,8 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
+require_cmd qemu-system-x86_64
+
 DISK="images/windows.qcow2"
 WIN_ISO="images/windows.iso"
 ANSWER_ISO="images/answer.iso"
@@ -25,6 +27,7 @@ HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
 # Shared directory for virtio-fs (host → guest Z:\)
 SHARED_DIR="${SHARED_DIR:-$PROJECT_ROOT/shared}"
 VIRTIOFSD_SOCK="/tmp/virtiofsd-wincore.sock"
+USE_VIRTIOFS=false
 
 # Kill previous QEMU if running
 kill_qemu
@@ -47,10 +50,7 @@ else
   log_warn "Install will be significantly slower."
 fi
 
-# Create shared directory if it doesn't exist
-mkdir -p "$SHARED_DIR"
-
-# Find virtiofsd binary (Arch: /usr/lib/virtiofsd, Ubuntu/Debian: /usr/libexec/virtiofsd or PATH)
+# Find virtiofsd binary (Linux-only: Arch /usr/lib, Debian /usr/libexec, or PATH)
 VIRTIOFSD=""
 for candidate in /usr/lib/virtiofsd /usr/libexec/virtiofsd; do
   [[ -x "$candidate" ]] && VIRTIOFSD="$candidate" && break
@@ -58,42 +58,70 @@ done
 if [[ -z "$VIRTIOFSD" ]]; then
   VIRTIOFSD=$(command -v virtiofsd 2>/dev/null || true)
 fi
-if [[ -z "$VIRTIOFSD" ]]; then
-  log_error "virtiofsd not found. Install it: pacman -S virtiofsd (Arch) / apt install virtiofsd (Debian)"
-  exit 1
+
+if [[ -n "$VIRTIOFSD" ]]; then
+  USE_VIRTIOFS=true
+  mkdir -p "$SHARED_DIR"
+
+  # Start virtiofsd daemon for host→guest filesystem sharing
+  log_info "Starting virtiofsd (sharing $SHARED_DIR)..."
+  VIRTIOFSD_ARGS=(
+    --socket-path="$VIRTIOFSD_SOCK"
+    --shared-dir="$SHARED_DIR"
+    --log-level=error
+    --cache=always
+  )
+  # Inside containers, unshare is not permitted — disable sandboxing
+  if is_container; then
+    VIRTIOFSD_ARGS+=(--sandbox none)
+    log_warn "Running inside container — virtiofsd sandbox disabled."
+  fi
+  "$VIRTIOFSD" "${VIRTIOFSD_ARGS[@]}" &
+  VIRTIOFSD_PID=$!
+
+  # Wait for socket to appear
+  for _ in $(seq 1 20); do
+    [[ -S "$VIRTIOFSD_SOCK" ]] && break
+    sleep 0.25
+  done
+  if [[ ! -S "$VIRTIOFSD_SOCK" ]]; then
+    log_error "virtiofsd failed to start."
+    exit 1
+  fi
+  log_dim "virtiofsd PID: $VIRTIOFSD_PID"
+else
+  log_warn "virtiofsd not found — shared directory (virtio-fs) disabled."
+  case "$(uname -s)" in
+    Darwin) log_warn "virtiofsd is Linux-only; shared directories are not supported on macOS hosts." ;;
+    Linux)  log_warn "Install with: sudo apt install virtiofsd  (or: sudo dnf install virtiofsd / sudo pacman -S virtiofsd)" ;;
+  esac
 fi
 
-# Start virtiofsd daemon for host→guest filesystem sharing
-log_info "Starting virtiofsd (sharing $SHARED_DIR)..."
-"$VIRTIOFSD" \
-  --socket-path="$VIRTIOFSD_SOCK" \
-  --shared-dir="$SHARED_DIR" \
-  --log-level=error \
-  --cache=always &
-VIRTIOFSD_PID=$!
-
-# Wait for socket to appear
-for _ in $(seq 1 20); do
-  [[ -S "$VIRTIOFSD_SOCK" ]] && break
-  sleep 0.25
-done
-if [[ ! -S "$VIRTIOFSD_SOCK" ]]; then
-  log_error "virtiofsd failed to start."
-  exit 1
+# Disk I/O backend: io_uring on Linux (host only), threads elsewhere/containers
+AIO_BACKEND="threads"
+if [[ "$(uname -s)" == "Linux" ]] && ! is_container; then
+  AIO_BACKEND="io_uring"
 fi
-log_dim "virtiofsd PID: $VIRTIOFSD_PID"
 
 QEMU_ARGS=(
-  -machine "q35,accel=${ACCEL},memory-backend=mem0"
-  -object "memory-backend-memfd,id=mem0,size=${RAM_MB}M,share=on"
-  -device isa-debugcon,iobase=0x402,chardev=debugout
-  -chardev file,id=debugout,path=/dev/stderr
   -cpu "$CPU_MODEL"
   -m "$RAM_MB"
   -smp "$CPU_CORES"
+  -device isa-debugcon,iobase=0x402,chardev=debugout
+  -chardev file,id=debugout,path=/dev/stderr
+)
 
+# virtio-fs requires memory-backend-memfd with share=on
+if [[ "$USE_VIRTIOFS" == true ]]; then
+  QEMU_ARGS+=(-machine "q35,accel=${ACCEL},memory-backend=mem0")
+  QEMU_ARGS+=(-object "memory-backend-memfd,id=mem0,size=${RAM_MB}M,share=on")
+else
+  QEMU_ARGS+=(-machine "q35,accel=${ACCEL}")
+fi
+
+QEMU_ARGS+=(
   # Disk (VirtIO — fast I/O, drivers loaded from VirtIO ISO during windowsPE)
-  -drive "file=${DISK},if=virtio,format=qcow2,cache=unsafe,aio=io_uring"
+  -drive "file=${DISK},if=virtio,format=qcow2,cache=unsafe,aio=${AIO_BACKEND}"
 )
 
 # Mount ISOs and set boot order only for fresh installs
@@ -125,14 +153,12 @@ QEMU_ARGS+=(
   -chardev socket,path=/tmp/virtio-serial-wincore.sock,server=on,wait=off,id=vserial0
   -device virtserialport,chardev=vserial0,name=org.qemu.guest_agent.0
 
-  # VirtIO-FS (host shared directory → guest Z:\)
-  -chardev "socket,id=vfs0,path=$VIRTIOFSD_SOCK"
-  -device "vhost-user-fs-pci,chardev=vfs0,tag=hostshare"
-
   # Network — virtio-net is faster than e1000; Windows Server 2022 has the driver
   -nic "user,model=virtio-net-pci,hostfwd=tcp::${HOST_RDP_PORT}-:3389,hostfwd=tcp::${HOST_WINRM_PORT}-:5985,hostfwd=tcp::${HOST_SSH_PORT}-:22"
 
-  # Display — VNC for graphical, serial for TTY output
+  # Display — VGA at 1280x800, VNC for remote access
+  -vga none
+  -device VGA,xres=1280,yres=800
   -display none
   -vnc "$VNC_DISPLAY"
   -serial stdio
@@ -141,6 +167,14 @@ QEMU_ARGS+=(
   -pidfile "$PIDFILE"
 )
 
+# VirtIO-FS (host shared directory → guest Z:\) — requires virtiofsd
+if [[ "$USE_VIRTIOFS" == true ]]; then
+  QEMU_ARGS+=(
+    -chardev "socket,id=vfs0,path=$VIRTIOFSD_SOCK"
+    -device "vhost-user-fs-pci,chardev=vfs0,tag=hostshare"
+  )
+fi
+
 # Compute VNC port from display number
 VNC_PORT=$(( 5900 + ${VNC_DISPLAY#:} ))
 
@@ -148,7 +182,9 @@ log_step "Starting QEMU..."
 log_info "RAM: ${RAM_MB}MB | CPUs: ${CPU_CORES} | Accel: ${ACCEL}"
 log_info "VNC: localhost:${VNC_PORT} (display ${VNC_DISPLAY})"
 log_info "RDP: localhost:${HOST_RDP_PORT} | WinRM: localhost:${HOST_WINRM_PORT} | SSH: localhost:${HOST_SSH_PORT}"
-log_info "Shared: $SHARED_DIR → Z:\\"
+if [[ "$USE_VIRTIOFS" == true ]]; then
+  log_info "Shared: $SHARED_DIR → Z:\\"
+fi
 
 # Run QEMU as a background child (not daemonized — dies with us)
 qemu-system-x86_64 "${QEMU_ARGS[@]}" &
@@ -166,9 +202,11 @@ cleanup() {
     kill "$NOVNC_PID" 2>/dev/null
     wait "$NOVNC_PID" 2>/dev/null
   fi
-  log_warn "Stopping virtiofsd (PID $VIRTIOFSD_PID)..."
-  kill "$VIRTIOFSD_PID" 2>/dev/null
-  wait "$VIRTIOFSD_PID" 2>/dev/null
+  if [[ -n "${VIRTIOFSD_PID:-}" ]]; then
+    log_warn "Stopping virtiofsd (PID $VIRTIOFSD_PID)..."
+    kill "$VIRTIOFSD_PID" 2>/dev/null
+    wait "$VIRTIOFSD_PID" 2>/dev/null
+  fi
   rm -f "$PIDFILE" "$VIRTIOFSD_SOCK" /tmp/virtio-serial-wincore.sock
 }
 trap cleanup EXIT INT TERM
@@ -183,10 +221,13 @@ if [[ -d "$NOVNC_WEB" ]] && command -v websockify &>/dev/null; then
   log_dim "noVNC PID: $NOVNC_PID"
 fi
 
-# Launch VNC viewer if available
+# Launch VNC viewer
 if command -v vncviewer &>/dev/null; then
   log_info "Opening VNC viewer..."
   vncviewer "localhost:${VNC_PORT}" &>/dev/null &
+elif [[ "$(uname -s)" == "Darwin" ]]; then
+  # macOS: prefer a dedicated VNC app over Screen Sharing (which prompts for password on no-auth servers)
+  log_info "Connect via VNC: localhost:${VNC_PORT} (install a VNC viewer like TigerVNC: brew install tiger-vnc)"
 fi
 
 # Wait for WinRM to become available
@@ -201,10 +242,14 @@ fi
 ELAPSED=0
 INTERVAL=30
 
-while ! (echo > /dev/tcp/127.0.0.1/"$HOST_WINRM_PORT") 2>/dev/null; do
+while true; do
   if ! kill -0 "$QEMU_PID" 2>/dev/null; then
     log_error "QEMU process exited unexpectedly."
     exit 1
+  fi
+  # Try a real HTTP request to WinRM — TCP connect alone can succeed against QEMU's port forwarding
+  if curl -sf -m 2 -o /dev/null "http://127.0.0.1:${HOST_WINRM_PORT}/wsman" 2>/dev/null; then
+    break
   fi
   if (( ELAPSED >= TIMEOUT )); then
     log_error "Timed out waiting for WinRM after ${TIMEOUT}s."
@@ -220,10 +265,14 @@ if [[ "$FRESH_INSTALL" == true ]]; then
   log_step "WinRM is up — waiting for post-install to finish (SSH port ${HOST_SSH_PORT})..."
   SSH_TIMEOUT=7200  # 2 hours for downloads/cleanup
   SSH_ELAPSED=0
-  while ! (echo > /dev/tcp/127.0.0.1/"$HOST_SSH_PORT") 2>/dev/null; do
+  while true; do
     if ! kill -0 "$QEMU_PID" 2>/dev/null; then
       log_error "QEMU process exited unexpectedly."
       exit 1
+    fi
+    # Check for SSH banner (real service, not just QEMU port forward)
+    if ssh -o ConnectTimeout=2 -o BatchMode=yes -o StrictHostKeyChecking=no -p "$HOST_SSH_PORT" administrator@127.0.0.1 exit 2>&1 | grep -qi "permission denied\|authenticated"; then
+      break
     fi
     if (( SSH_ELAPSED >= SSH_TIMEOUT )); then
       log_warn "Timed out waiting for SSH after ${SSH_TIMEOUT}s — setup may still be running."
@@ -235,6 +284,7 @@ if [[ "$FRESH_INSTALL" == true ]]; then
   done
   echo ""
   log_ok "Windows installation complete!"
+  stamp_build
 else
   echo ""
   log_ok "Windows is ready!"

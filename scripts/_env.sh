@@ -51,6 +51,38 @@ log_warn()  { echo "${_C_YELLOW} ⚠ $*${_C_RESET}"; }
 log_error() { echo "${_C_RED} ✗ $*${_C_RESET}" >&2; }
 log_dim()   { echo "${_C_DIM}   $*${_C_RESET}"; }
 
+# Check for a required command, print install hint if missing
+require_cmd() {
+  local cmd="$1"
+  command -v "$cmd" &>/dev/null && return 0
+
+  local hint=""
+  case "$cmd" in
+    genisoimage)
+      case "$(uname -s)" in
+        Darwin) hint="Install with: brew install cdrtools" ;;
+        Linux)  hint="Install with: sudo apt install genisoimage  (or: sudo dnf install genisoimage)" ;;
+      esac
+      ;;
+    qemu-system-x86_64)
+      case "$(uname -s)" in
+        Darwin) hint="Install with: brew install qemu" ;;
+        Linux)  hint="Install with: sudo apt install qemu-system-x86  (or: sudo dnf install qemu-system-x86-core)" ;;
+      esac
+      ;;
+    curl)
+      case "$(uname -s)" in
+        Darwin) hint="Install with: brew install curl" ;;
+        Linux)  hint="Install with: sudo apt install curl  (or: sudo dnf install curl)" ;;
+      esac
+      ;;
+  esac
+
+  log_error "Required command not found: $cmd"
+  [[ -n "$hint" ]] && log_error "$hint"
+  exit 1
+}
+
 # Kill any running QEMU instance from a previous build
 kill_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -69,6 +101,11 @@ kill_qemu() {
     fi
     rm -f "$PIDFILE"
   fi
+}
+
+# Detect if running inside a container (Docker, LXC, etc.)
+is_container() {
+  [[ -f /.dockerenv ]] || grep -q '/docker\|/lxc' /proc/1/cgroup 2>/dev/null
 }
 
 # Stamp file records the config state at last successful disk creation

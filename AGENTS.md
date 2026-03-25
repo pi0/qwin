@@ -11,9 +11,9 @@ Docker + QEMU project for running Windows Server Core with fully unattended inst
 - `scripts/02-create-disk.sh` — creates qcow2 virtual disk
 - `scripts/03-gen-autounattend.sh` — renders Autounattend.xml from template via sed
 - `scripts/03b-gen-ssh-hostkeys.sh` — generates persistent SSH host keys (ed25519, rsa, ecdsa) in `images/ssh-hostkeys/`
-- `scripts/04-gen-answer-iso.sh` — bundles Autounattend.xml + setup.ps1 + SSH host keys into answer ISO
-- `scripts/05-start-qemu.sh` — launches virtiofsd + QEMU with VirtIO devices, waits for WinRM health check
-- `scripts/_env.sh` — shared env loader, defaults, helper functions
+- `scripts/04-gen-answer-iso.sh` — bundles Autounattend.xml + setup.ps1 + SSH host keys into answer ISO (uses `genisoimage` or `mkisofs`)
+- `scripts/05-start-qemu.sh` — launches QEMU (+ virtiofsd on Linux) with VirtIO devices, waits for WinRM health check
+- `scripts/_env.sh` — shared env loader, defaults, helper functions, `require_cmd` for dependency checks with install hints
 - `config/Autounattend.xml.tpl` — unattended install template (windowsPE + specialize + oobeSystem)
 - `config/setup.ps1` — post-install script (runs at first logon via answer ISO)
 - `Dockerfile` — Ubuntu 24.04 base with QEMU, genisoimage, curl, netcat
@@ -21,12 +21,13 @@ Docker + QEMU project for running Windows Server Core with fully unattended inst
 ## Key Details
 
 - Config via `.env` file (see `.env.example`)
-- KVM auto-detected at runtime (`/dev/kvm`), falls back to TCG
+- KVM auto-detected at runtime (`/dev/kvm`), falls back to TCG (always TCG on macOS)
+- macOS support: `mkisofs` (cdrtools) instead of `genisoimage`, `aio=threads` instead of `io_uring`, no VirtIO-FS, Screen Sharing for VNC
 - Ports: 3389 (RDP), 5985 (WinRM), 5900 (VNC), 2222 (SSH)
 - `images/` dir holds all artifacts (ISO, qcow2 disk, answer ISO, virtio ISO) — gitignored
 - VirtIO devices: balloon (memory), serial (guest-host channel), virtio-fs (shared directory)
-- VirtIO-FS: `virtiofsd` runs on host, shares `SHARED_DIR` (default `./shared`) → guest `Z:\` via `vhost-user-fs-pci`
-- QEMU uses `memory-backend-memfd` with `share=on` (required for vhost-user-fs)
+- VirtIO-FS (Linux only): `virtiofsd` runs on host, shares `SHARED_DIR` (default `./shared`) → guest `Z:\` via `vhost-user-fs-pci`
+- On Linux with VirtIO-FS: QEMU uses `memory-backend-memfd` with `share=on` (required for vhost-user-fs); on macOS: plain memory
 - Guest-side `VirtioFsSvc` Windows service runs `virtiofs.exe -d Z: -m hostshare` (auto-start)
 - OpenSSH Server: GitHub zip install (Add-WindowsCapability unavailable on Server Core)
 - SSH host keys: pre-generated at build time (`images/ssh-hostkeys/`), bundled in answer ISO, deployed to `%ProgramData%\ssh\` before sshd starts — fingerprints are stable across rebuilds (use `--clean` to regenerate)

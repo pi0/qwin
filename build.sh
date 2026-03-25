@@ -36,7 +36,7 @@ fi
 # --- Host build: delegate to scripts/build.sh ---
 if [[ "$BUILD_MODE" == "host" ]]; then
   _log_info "Building on host (QEMU)"
-  exec bash scripts/build.sh "${PASSTHROUGH_ARGS[@]}"
+  exec bash scripts/build.sh "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
 fi
 
 # --- Docker build ---
@@ -74,4 +74,4 @@ if [[ -d "$SHARED_DIR" ]]; then
   DOCKER_ARGS+=(-v "$(realpath "$SHARED_DIR"):/opt/winvm/shared")
 fi
 
-exec docker run "${DOCKER_ARGS[@]}" "$IMAGE_NAME" "${PASSTHROUGH_ARGS[@]}"
+exec docker run "${DOCKER_ARGS[@]}" "$IMAGE_NAME" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
