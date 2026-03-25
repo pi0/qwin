@@ -22,7 +22,7 @@ Out of the box, the VM comes pre-configured with:
 ### Linux
 
 - **QEMU** (for host builds) or **Docker** (for containerized builds) — `build.sh` auto-detects which is available
-- **KVM** strongly recommended — install runs in ~20-30 min with KVM vs 2-4 hours without
+- **KVM** strongly recommended
 - `genisoimage` — for generating the answer ISO
 - `virtiofsd` — for shared directory support (VirtIO-FS)
 
