@@ -11,13 +11,12 @@ Out of the box, the VM comes pre-configured with:
 - **Lean image** — Defender removed, firewall disabled, WinSxS cleaned, free space zeroed for qcow2 compaction
 - **VirtIO guest tools** — optimized storage/network drivers and memory balooning
 - **VirtIO-FS** — shared host directory mounted as `Z:\` in the guest
-- **Git** and **Node.js LTS** — installed via Chocolatey
 - **Serial console (EMS)** — for headless debugging
 - **noVNC web console** — browser-based VNC viewer, auto-opens during build
 
 ## Prerequisites
 
-- **Docker** (or a compatible runtime). On macOS, [OrbStack](https://orbstack.dev) is recommended.
+- **QEMU** (for host builds) or **Docker** (for containerized builds) — `build.sh` auto-detects which is available
 - **KVM** strongly recommended — install runs in ~20-30 min with KVM vs 2-4 hours without. Note: macOS runtimes don't expose nested KVM yet, so installs will use software emulation.
 
 ## Quick Start
@@ -33,10 +32,17 @@ cp .env.example .env
 2. **Build and run:**
 
 ```bash
-./scripts/build-docker.sh
+./build.sh
 ```
 
-This builds the Docker image, starts the container, and opens a noVNC web console in your browser automatically. KVM is used when available (`/dev/kvm`), otherwise falls back to software emulation.
+This auto-detects the best build method: if QEMU is installed locally, it runs directly on the host; otherwise it builds and runs a Docker container. KVM is used when available (`/dev/kvm`), otherwise falls back to software emulation.
+
+You can force a specific mode:
+
+```bash
+./build.sh --host    # Force host QEMU build
+./build.sh --docker  # Force Docker build
+```
 
 3. **Connect once installation completes:**
    - **Web console:** `http://localhost:6080` (opens automatically)
@@ -83,17 +89,17 @@ Set `SHARED_DIR` in `.env` to change the host path.
 
 ## Persistence
 
-The `images/` directory holds the virtual disk and downloaded ISOs. It's automatically volume-mounted by `build-docker.sh` so artifacts persist across container restarts. On subsequent runs, the VM boots from disk instead of reinstalling.
+The `images/` directory holds the virtual disk and downloaded ISOs. In Docker mode, it's automatically volume-mounted so artifacts persist across container restarts. On subsequent runs, the VM boots from disk instead of reinstalling.
 
 ## Rebuilding
 
 To force a clean reinstall:
 
 ```bash
-./scripts/build-docker.sh --clean
+./build.sh --clean
 ```
 
-This wipes the virtual disk and regenerated config, but preserves downloaded ISOs.
+This wipes the virtual disk and regenerated config, but preserves downloaded ISOs. Can be combined with `--host`/`--docker`.
 
 ## Performance Optimizations
 

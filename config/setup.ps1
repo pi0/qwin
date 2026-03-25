@@ -349,3 +349,6 @@ Log 'Free space zeroed'
 
 # --- 11. Done ---
 Step 11 $total 'Setup complete'
+Log 'All setup steps finished'
+# Write completion marker — host waits for this via WinRM before declaring "complete"
+Set-Content -Path 'C:\setup-complete.flag' -Value 'done'

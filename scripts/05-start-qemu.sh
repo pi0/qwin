@@ -215,10 +215,28 @@ while ! (echo > /dev/tcp/127.0.0.1/"$HOST_WINRM_PORT") 2>/dev/null; do
   log_dim "Still waiting... (${ELAPSED}s elapsed)"
 done
 
-echo ""
 if [[ "$FRESH_INSTALL" == true ]]; then
+  # WinRM opens early (step 2 of setup.ps1) — wait for SSH port as a better completion signal
+  log_step "WinRM is up — waiting for post-install to finish (SSH port ${HOST_SSH_PORT})..."
+  SSH_TIMEOUT=7200  # 2 hours for downloads/cleanup
+  SSH_ELAPSED=0
+  while ! (echo > /dev/tcp/127.0.0.1/"$HOST_SSH_PORT") 2>/dev/null; do
+    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+      log_error "QEMU process exited unexpectedly."
+      exit 1
+    fi
+    if (( SSH_ELAPSED >= SSH_TIMEOUT )); then
+      log_warn "Timed out waiting for SSH after ${SSH_TIMEOUT}s — setup may still be running."
+      break
+    fi
+    sleep "$INTERVAL"
+    SSH_ELAPSED=$((SSH_ELAPSED + INTERVAL))
+    log_dim "Post-install in progress... (${SSH_ELAPSED}s since WinRM came up)"
+  done
+  echo ""
   log_ok "Windows installation complete!"
 else
+  echo ""
   log_ok "Windows is ready!"
 fi
 log_info "RDP:   localhost:${HOST_RDP_PORT}"

@@ -4,7 +4,8 @@ Docker + QEMU project for running Windows Server Core with fully unattended inst
 
 ## Project Structure
 
-- `build.sh` — master orchestrator (supports `--clean`), calls scripts 01–05 in order
+- `build.sh` — smart entry point: auto-detects host QEMU vs Docker, supports `--host`/`--docker`/`--clean`
+- `scripts/build.sh` — actual build orchestrator, calls scripts 01–05 in order
 - `scripts/01-fetch-iso.sh` — downloads or symlinks Windows ISO
 - `scripts/01b-fetch-virtio.sh` — downloads VirtIO guest drivers ISO from Fedora
 - `scripts/02-create-disk.sh` — creates qcow2 virtual disk
