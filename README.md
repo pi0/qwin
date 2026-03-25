@@ -11,60 +11,41 @@ Out of the box, the VM comes pre-configured with:
 - **Lean image** — Defender removed, firewall disabled, WinSxS cleaned, free space zeroed for qcow2 compaction
 - **VirtIO guest tools** — optimized storage/network drivers and memory balooning
 - **VirtIO-FS** — shared host directory mounted as `Z:\` in the guest
+- **Git** and **Node.js LTS** — installed via Chocolatey
+- **Serial console (EMS)** — for headless debugging
+- **noVNC web console** — browser-based VNC viewer, auto-opens during build
 
 ## Prerequisites
 
 - **Docker** (or a compatible runtime). On macOS, [OrbStack](https://orbstack.dev) is recommended.
 - **KVM** strongly recommended — install runs in ~20-30 min with KVM vs 2-4 hours without. Note: macOS runtimes don't expose nested KVM yet, so installs will use software emulation.
 
-## Building the Image
-
-Windows is proprietary software — redistributing a Docker image containing a Windows installation or ISO would violate Microsoft's licensing terms. You must supply your own Windows Server ISO (evaluation copies are free from Microsoft).
+## Quick Start
 
 1. **Create `.env` with your Windows ISO URL:**
 
 ```bash
 cp .env.example .env
+# Edit .env — set WIN_ISO_URL to a Windows Server ISO (URL or local path)
+# Get a free evaluation ISO from https://www.microsoft.com/en-us/evalcenter/evaluate-windows-server
 ```
 
-The only required setting is `WIN_ISO_URL` — point it to a Windows Server ISO (URL or local path). Get a free evaluation ISO from [Microsoft](https://www.microsoft.com/en-us/evalcenter/evaluate-windows-server). Everything else has sensible defaults (see [Configuration](#configuration)).
-
-2. **Build the Docker image:**
+2. **Build and run:**
 
 ```bash
-docker build -t wincore .
+./scripts/build-docker.sh
 ```
 
-3. **Run with KVM acceleration (recommended):**
+This builds the Docker image, starts the container, and opens a noVNC web console in your browser automatically. KVM is used when available (`/dev/kvm`), otherwise falls back to software emulation.
 
-```bash
-docker run -it --rm \
-  --device /dev/kvm \
-  -v $(pwd)/images:/opt/winvm/images \
-  -p 3389:3389 \
-  -p 5985:5985 \
-  -p 5900:5900 \
-  --env-file .env \
-  wincore
-```
-
-Without KVM (software emulation — much slower):
-
-```bash
-docker run -it --rm \
-  -v $(pwd)/images:/opt/winvm/images \
-  -p 3389:3389 \
-  -p 5985:5985 \
-  -p 5900:5900 \
-  --env-file .env \
-  wincore
-```
-
-4. **Connect once installation completes:**
+3. **Connect once installation completes:**
+   - **Web console:** `http://localhost:6080` (opens automatically)
    - **RDP:** `localhost:3389`
-   - **SSH:** `localhost:2222`
+   - **SSH:** `ssh administrator@localhost -p 2222`
    - **WinRM:** `localhost:5985`
-   - **VNC:** `localhost:5900` (for monitoring install progress)
+   - **VNC:** `localhost:5900`
+
+All ports are bound to `127.0.0.1` (localhost only).
 
 ## Configuration
 
@@ -82,7 +63,12 @@ All settings are in `.env` (see `.env.example`):
 | `RAM_MB` | `4096` | VM RAM in MB |
 | `CPU_CORES` | `2` | VM CPU cores |
 | `VNC_DISPLAY` | `:0` | VNC display number |
+| `HOST_RDP_PORT` | `3389` | Host port for RDP |
+| `HOST_WINRM_PORT` | `5985` | Host port for WinRM |
+| `HOST_SSH_PORT` | `2222` | Host port for SSH |
+| `HOST_NOVNC_PORT` | `6080` | Host port for noVNC web console |
 | `SHARED_DIR` | `./shared` | Host directory shared into guest as `Z:\` |
+| `SSH_PUBKEY` | *(empty)* | Path to SSH public key for passwordless login |
 
 ## Shared Directory
 
@@ -97,20 +83,14 @@ Set `SHARED_DIR` in `.env` to change the host path.
 
 ## Persistence
 
-The `images/` directory holds the virtual disk and downloaded ISOs. Mount it as a volume to persist across container restarts:
-
-```bash
--v $(pwd)/images:/opt/winvm/images
-```
-
-On subsequent runs, existing artifacts are reused — the VM boots from disk instead of reinstalling.
+The `images/` directory holds the virtual disk and downloaded ISOs. It's automatically volume-mounted by `build-docker.sh` so artifacts persist across container restarts. On subsequent runs, the VM boots from disk instead of reinstalling.
 
 ## Rebuilding
 
 To force a clean reinstall:
 
 ```bash
-./build.sh --clean
+./scripts/build-docker.sh --clean
 ```
 
 This wipes the virtual disk and regenerated config, but preserves downloaded ISOs.
@@ -132,4 +112,4 @@ The build is tuned for fast installation:
 
 ## Monitoring
 
-During installation you can watch progress via VNC. The post-install steps show status in the PowerShell window title (e.g. `[3/9] Installing VirtIO guest tools`). Detailed logs are written to `C:\setup.log` inside the VM.
+During installation you can watch progress via the noVNC web console (opens automatically) or any VNC client on port 5900. The post-install steps show status in the PowerShell window title (e.g. `[3/9] Installing VirtIO guest tools`). Detailed logs are written to `C:\setup.log` inside the VM.

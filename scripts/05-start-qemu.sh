@@ -44,7 +44,7 @@ if [[ -e /dev/kvm ]]; then
   CPU_MODEL="host"
 else
   log_warn "KVM not available — falling back to TCG (software emulation)."
-  log_warn "Install will be significantly slower (2-4 hours vs 20-30 min)."
+  log_warn "Install will be significantly slower."
 fi
 
 # Create shared directory if it doesn't exist
@@ -161,12 +161,27 @@ cleanup() {
   log_warn "Shutting down QEMU (PID $QEMU_PID)..."
   kill "$QEMU_PID" 2>/dev/null
   wait "$QEMU_PID" 2>/dev/null
+  if [[ -n "${NOVNC_PID:-}" ]]; then
+    log_warn "Stopping noVNC (PID $NOVNC_PID)..."
+    kill "$NOVNC_PID" 2>/dev/null
+    wait "$NOVNC_PID" 2>/dev/null
+  fi
   log_warn "Stopping virtiofsd (PID $VIRTIOFSD_PID)..."
   kill "$VIRTIOFSD_PID" 2>/dev/null
   wait "$VIRTIOFSD_PID" 2>/dev/null
   rm -f "$PIDFILE" "$VIRTIOFSD_SOCK" /tmp/virtio-serial-wincore.sock
 }
 trap cleanup EXIT INT TERM
+
+# Launch noVNC web interface if available
+NOVNC_PORT="${NOVNC_PORT:-6080}"
+NOVNC_WEB="${NOVNC_WEB:-/usr/share/novnc}"
+if [[ -d "$NOVNC_WEB" ]] && command -v websockify &>/dev/null; then
+  log_info "Starting noVNC on port ${NOVNC_PORT}..."
+  websockify --web="$NOVNC_WEB" "$NOVNC_PORT" "localhost:${VNC_PORT}" &>/dev/null &
+  NOVNC_PID=$!
+  log_dim "noVNC PID: $NOVNC_PID"
+fi
 
 # Launch VNC viewer if available
 if command -v vncviewer &>/dev/null; then
@@ -210,6 +225,9 @@ log_info "RDP:   localhost:${HOST_RDP_PORT}"
 log_info "SSH:   ssh administrator@localhost -p ${HOST_SSH_PORT}"
 log_info "WinRM: localhost:${HOST_WINRM_PORT}"
 log_info "VNC:   localhost:${VNC_PORT}"
+if [[ -n "${NOVNC_PID:-}" ]]; then
+  log_info "Web:   http://localhost:${NOVNC_PORT}/vnc.html?autoconnect=true"
+fi
 echo ""
 log_info "Press Ctrl+C to stop the VM."
 

@@ -27,6 +27,7 @@ export VNC_DISPLAY="${VNC_DISPLAY:-:0}"
 export HOST_RDP_PORT="${HOST_RDP_PORT:-3389}"
 export HOST_WINRM_PORT="${HOST_WINRM_PORT:-5985}"
 export HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
+export NOVNC_PORT="${NOVNC_PORT:-6080}"
 export SSH_PUBKEY="${SSH_PUBKEY:-}"
 
 PIDFILE="/tmp/qemu-wincore.pid"

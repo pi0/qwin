@@ -40,19 +40,64 @@ if [[ -n "$SHARED_DIR" && -d "$SHARED_DIR" ]]; then
   SHARED_ARGS+=(-v "$SHARED_DIR:/opt/winvm/shared")
 fi
 
+# Mount SSH public key into container if set
+SSH_ARGS=()
+SSH_PUBKEY="${SSH_PUBKEY:-}"
+if [[ -n "$SSH_PUBKEY" ]]; then
+  PUBKEY_PATH="${SSH_PUBKEY/#\~/$HOME}"
+  if [[ -f "$PUBKEY_PATH" ]]; then
+    SSH_ARGS+=(-v "$PUBKEY_PATH:$PUBKEY_PATH:ro")
+  fi
+fi
+
 # Compute VNC port from display number (must match QEMU's -vnc setting)
 VNC_DISPLAY="${VNC_DISPLAY:-:0}"
 VNC_PORT=$(( 5900 + ${VNC_DISPLAY#:} ))
 
+HOST_VNC_PORT="${HOST_VNC_PORT:-$VNC_PORT}"
+HOST_NOVNC_PORT="${HOST_NOVNC_PORT:-6080}"
+
 echo ":: Starting container..."
-exec docker run --rm -it \
+CONTAINER_NAME="wincore-$$"
+docker run --rm -d --name "$CONTAINER_NAME" \
   --privileged \
-  "${DEVICE_ARGS[@]}" \
-  "${ENV_ARGS[@]}" \
-  "${SHARED_ARGS[@]}" \
+  ${DEVICE_ARGS[@]+"${DEVICE_ARGS[@]}"} \
+  ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} \
+  ${SHARED_ARGS[@]+"${SHARED_ARGS[@]}"} \
+  ${SSH_ARGS[@]+"${SSH_ARGS[@]}"} \
   -v "$PROJECT_ROOT/images:/opt/winvm/images" \
-  -p "${HOST_RDP_PORT:-3389}:${HOST_RDP_PORT:-3389}" \
-  -p "${HOST_WINRM_PORT:-5985}:${HOST_WINRM_PORT:-5985}" \
-  -p "${HOST_SSH_PORT:-2222}:${HOST_SSH_PORT:-2222}" \
-  -p "${HOST_VNC_PORT:-$VNC_PORT}:${VNC_PORT}" \
-  "$IMAGE_NAME" "$@"
+  -p "127.0.0.1:${HOST_RDP_PORT:-3389}:${HOST_RDP_PORT:-3389}" \
+  -p "127.0.0.1:${HOST_WINRM_PORT:-5985}:${HOST_WINRM_PORT:-5985}" \
+  -p "127.0.0.1:${HOST_SSH_PORT:-2222}:${HOST_SSH_PORT:-2222}" \
+  -p "127.0.0.1:${HOST_VNC_PORT}:${VNC_PORT}" \
+  -p "127.0.0.1:${HOST_NOVNC_PORT}:6080" \
+  "$IMAGE_NAME" "$@" >/dev/null
+
+# Cleanup container on exit
+trap 'docker rm -f "$CONTAINER_NAME" 2>/dev/null' EXIT
+
+# Open noVNC in browser once QEMU reports VNC is ready
+(
+  while ! docker logs "$CONTAINER_NAME" 2>&1 | grep -q "VNC:.*localhost"; do
+    sleep 1
+  done
+  NOVNC_URL="http://127.0.0.1:${HOST_NOVNC_PORT}/vnc.html?autoconnect=true"
+  echo " ✓ Opening noVNC: $NOVNC_URL"
+  if [[ "$(uname)" == "Darwin" ]]; then
+    # Prefer Chromium-based browsers, fall back to Safari, then default
+    if open -Ra "Google Chrome" 2>/dev/null; then
+      open -na "Google Chrome" --args --new-window "$NOVNC_URL"
+    elif open -Ra "Chromium" 2>/dev/null; then
+      open -na "Chromium" --args --new-window "$NOVNC_URL"
+    elif open -Ra "Safari" 2>/dev/null; then
+      open -na "Safari" "$NOVNC_URL"
+    else
+      open "$NOVNC_URL"
+    fi
+  elif command -v xdg-open &>/dev/null; then
+    xdg-open "$NOVNC_URL"
+  fi
+) &
+
+# Stream container logs (replaces exec — Ctrl-C triggers trap cleanup)
+docker logs -f "$CONTAINER_NAME"
