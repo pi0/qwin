@@ -1,0 +1,5 @@
+images/
+shared/
+.env
+*.iso
+*.qcow2

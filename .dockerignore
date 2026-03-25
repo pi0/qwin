@@ -1,0 +1,5 @@
+images/
+.env
+.git/
+*.md
+LICENSE
