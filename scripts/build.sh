@@ -8,7 +8,7 @@ kill_qemu
 # --clean: wipe all generated artifacts and start fresh
 if [[ "${1:-}" == "--clean" ]]; then
   log_warn "Cleaning all build artifacts..."
-  rm -f images/windows.qcow2 images/answer.iso images/Autounattend.xml "$BUILD_STAMP"
+  rm -f images/windows.qcow2 images/windows-overlay.qcow2 images/answer.iso images/Autounattend.xml "$BUILD_STAMP"
   # rm -rf images/ssh-hostkeys
   shift
 fi

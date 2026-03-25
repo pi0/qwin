@@ -8,58 +8,84 @@ cd "$PROJECT_ROOT"
 _log_info()  { echo ":: $*"; }
 _log_error() { echo "✗ $*" >&2; }
 
-# --- Detect build mode ---
-# Explicit override via BUILD_MODE env var or --docker / --host flags
-BUILD_MODE="${BUILD_MODE:-auto}"
+# --- Detect run mode ---
+RUN_MODE="${RUN_MODE:-auto}"
 PASSTHROUGH_ARGS=()
 
 for arg in "$@"; do
   case "$arg" in
-    --docker) BUILD_MODE="docker" ;;
-    --host)   BUILD_MODE="host" ;;
+    --docker) RUN_MODE="docker" ;;
+    --host)   RUN_MODE="host" ;;
     *)        PASSTHROUGH_ARGS+=("$arg") ;;
   esac
 done
 
-FORCE_BUILD=false
-for i in "${!PASSTHROUGH_ARGS[@]}"; do
-  if [[ "${PASSTHROUGH_ARGS[$i]}" == "--clean" ]]; then
-    FORCE_BUILD=true
-    unset 'PASSTHROUGH_ARGS[$i]'
-  fi
-done
-PASSTHROUGH_ARGS=("${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}")
-
-if [[ "$BUILD_MODE" == "auto" ]]; then
+if [[ "$RUN_MODE" == "auto" ]]; then
   if command -v qemu-system-x86_64 &>/dev/null; then
-    BUILD_MODE="host"
+    RUN_MODE="host"
   elif command -v docker &>/dev/null; then
-    BUILD_MODE="docker"
+    RUN_MODE="docker"
   else
     _log_error "Neither qemu-system-x86_64 nor docker found."
-    _log_error "Install QEMU for host builds or Docker for containerized builds."
+    _log_error "Install QEMU for host mode or Docker for containerized mode."
     exit 1
   fi
 fi
 
-# --- Already built? Delegate to run.sh ---
-if [[ "$FORCE_BUILD" != true && -f "images/windows.qcow2" ]]; then
-  _log_info "Base image already exists. Use --clean to rebuild."
-  _log_info "Starting VM via run.sh..."
-  MODE_FLAG=""
-  [[ "$BUILD_MODE" == "host" ]] && MODE_FLAG="--host"
-  [[ "$BUILD_MODE" == "docker" ]] && MODE_FLAG="--docker"
-  exec bash run.sh $MODE_FLAG "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
+# --- Host mode ---
+if [[ "$RUN_MODE" == "host" ]]; then
+  source scripts/_env.sh
+
+  OVERLAY_DISK="images/windows-overlay.qcow2"
+  BASE_DISK="images/windows.qcow2"
+
+  usage() {
+    echo "Usage: $0 [--reset] [--host|--docker]"
+    echo ""
+    echo "Boot Windows from the overlay disk (changes are reversible)."
+    echo ""
+    echo "Options:"
+    echo "  --reset    Discard all changes and recreate overlay from base"
+    echo "  --host     Force host (QEMU) mode"
+    echo "  --docker   Force Docker mode"
+    echo ""
+    echo "The base disk must exist (run build.sh first)."
+  }
+
+  RESET=false
+  for arg in "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"; do
+    case "$arg" in
+      --reset) RESET=true ;;
+      --help|-h) usage; exit 0 ;;
+      *) log_error "Unknown option: $arg"; usage; exit 1 ;;
+    esac
+  done
+
+  # Ensure base disk exists
+  if [[ ! -f "$BASE_DISK" ]]; then
+    log_error "No completed base image found."
+    log_error "Run ./build.sh first to create the base image."
+    exit 1
+  fi
+
+  # Reset: delete overlay and recreate
+  if [[ "$RESET" == true ]]; then
+    log_warn "Resetting overlay — discarding all changes..."
+    rm -f "$OVERLAY_DISK"
+  fi
+
+  # Create overlay if missing
+  if [[ ! -f "$OVERLAY_DISK" ]]; then
+    bash scripts/06-create-overlay.sh
+  fi
+
+  # Boot from overlay
+  export FRESH_INSTALL=false
+  exec bash scripts/05-start-qemu.sh
 fi
 
-# --- Host build: delegate to scripts/build.sh ---
-if [[ "$BUILD_MODE" == "host" ]]; then
-  _log_info "Building on host (QEMU)"
-  exec bash scripts/build.sh "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
-fi
-
-# --- Docker build ---
-_log_info "Building via Docker"
+# --- Docker mode ---
+_log_info "Running via Docker"
 
 # Pre-check: ensure required ports are free
 _check_port() {
@@ -93,7 +119,6 @@ _check_port "${HOST_SSH_PORT:-2222}"    "HOST_SSH"    || _ports_ok=false
 _check_port "${HOST_NOVNC_PORT:-16080}" "NOVNC"       || _ports_ok=false
 
 if [[ "$_ports_ok" != true ]]; then
-  # List running QEMU/KVM/docker instances to help identify the culprit
   _instances=$(ps -eo pid,user,args 2>/dev/null | grep -E 'qemu-system|kvm|docker run' | grep -v grep || true)
   if [[ -n "$_instances" ]]; then
     echo ""
@@ -107,13 +132,13 @@ fi
 
 IMAGE_NAME="${DOCKER_IMAGE:-wincore-builder}"
 
-# Build the Docker image
+# Build the Docker image (reuses cache if unchanged)
 docker build -t "$IMAGE_NAME" .
 
 # Assemble docker run flags
 DOCKER_ARGS=(
   --rm -it
-  --name wincore
+  --name wincore-run
   -v "$PROJECT_ROOT/images:/opt/winvm/images"
   -p "${HOST_RDP_PORT:-13389}:3389"
   -p "${HOST_SSH_PORT:-2222}:22"
@@ -136,4 +161,6 @@ if [[ -d "$SHARED_DIR" ]]; then
   DOCKER_ARGS+=(-v "$(realpath "$SHARED_DIR"):/opt/winvm/shared")
 fi
 
-exec docker run "${DOCKER_ARGS[@]}" "$IMAGE_NAME" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
+# Override entrypoint to run.sh inside container (host mode, since QEMU is in the container)
+exec docker run "${DOCKER_ARGS[@]}" "$IMAGE_NAME" bash -c \
+  'cd /opt/winvm && ./run.sh --host '"$(printf '%q ' "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}")"

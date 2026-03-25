@@ -4,7 +4,16 @@ source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
 require_cmd qemu-system-x86_64
 
-DISK="images/windows.qcow2"
+OVERLAY_DISK="images/windows-overlay.qcow2"
+BASE_DISK="images/windows.qcow2"
+
+# Use overlay disk if available (allows instant revert to post-install state)
+if [[ -f "$OVERLAY_DISK" ]]; then
+  DISK="$OVERLAY_DISK"
+  log_info "Booting from overlay disk (changes are reversible)."
+else
+  DISK="$BASE_DISK"
+fi
 WIN_ISO="images/windows.iso"
 ANSWER_ISO="images/answer.iso"
 VIRTIO_ISO="images/virtio-win.iso"
@@ -23,11 +32,9 @@ fi
 # Inside a container, QEMU binds to standard ports (Docker handles the host mapping)
 if is_container; then
   HOST_RDP_PORT=3389
-  HOST_WINRM_PORT=5985
   HOST_SSH_PORT=22
 else
   HOST_RDP_PORT="${HOST_RDP_PORT:-13389}"
-  HOST_WINRM_PORT="${HOST_WINRM_PORT:-15985}"
   HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
 fi
 
@@ -161,7 +168,7 @@ QEMU_ARGS+=(
   -device virtserialport,chardev=vserial0,name=org.qemu.guest_agent.0
 
   # Network — virtio-net is faster than e1000; Windows Server 2022 has the driver
-  -nic "user,model=virtio-net-pci,hostfwd=tcp::${HOST_RDP_PORT}-:3389,hostfwd=tcp::${HOST_WINRM_PORT}-:5985,hostfwd=tcp::${HOST_SSH_PORT}-:22"
+  -nic "user,model=virtio-net-pci,hostfwd=tcp::${HOST_RDP_PORT}-:3389,hostfwd=tcp::${HOST_SSH_PORT}-:22"
 
   # Display — VGA at 1280x800, VNC for remote access
   -vga none
@@ -188,7 +195,7 @@ VNC_PORT=$(( 5900 + ${VNC_DISPLAY#:} ))
 log_step "Starting QEMU..."
 log_info "RAM: ${RAM_MB}MB | CPUs: ${CPU_CORES} | Accel: ${ACCEL}"
 log_info "VNC: localhost:${VNC_PORT} (display ${VNC_DISPLAY})"
-log_info "RDP: localhost:${HOST_RDP_PORT} | WinRM: localhost:${HOST_WINRM_PORT} | SSH: localhost:${HOST_SSH_PORT}"
+log_info "RDP: localhost:${HOST_RDP_PORT} | SSH: localhost:${HOST_SSH_PORT}"
 if [[ "$USE_VIRTIOFS" == true ]]; then
   log_info "Shared: $SHARED_DIR → Z:\\"
 fi
@@ -242,13 +249,13 @@ elif [[ "$(uname -s)" == "Darwin" ]]; then
   log_info "Connect via VNC: localhost:${VNC_PORT} (install a VNC viewer like TigerVNC: brew install tiger-vnc)"
 fi
 
-# Wait for WinRM to become available
+# Wait for SSH to become available
 echo ""
 if [[ "$FRESH_INSTALL" == true ]]; then
-  log_step "Waiting for Windows installation to complete (WinRM port ${HOST_WINRM_PORT})..."
+  log_step "Waiting for Windows installation to complete (SSH port ${HOST_SSH_PORT})..."
   TIMEOUT=14400  # 4 hours max
 else
-  log_step "Waiting for Windows to boot (WinRM port ${HOST_WINRM_PORT})..."
+  log_step "Waiting for Windows to boot (SSH port ${HOST_SSH_PORT})..."
   TIMEOUT=300  # 5 min for a prebuilt disk
 fi
 ELAPSED=0
@@ -259,12 +266,14 @@ while true; do
     log_error "QEMU process exited unexpectedly."
     exit 1
   fi
-  # Try a real HTTP request to WinRM — TCP connect alone can succeed against QEMU's port forwarding
-  if curl -sf -m 2 -o /dev/null "http://127.0.0.1:${HOST_WINRM_PORT}/wsman" 2>/dev/null; then
+  # Check for SSH banner — a real sshd sends "SSH-" on connect; QEMU port forward does not
+  # Uses bash /dev/tcp with read timeout (works on Linux + macOS without external deps)
+  if _banner=$(bash -c 'exec 3<>/dev/tcp/127.0.0.1/'"$HOST_SSH_PORT"' 2>/dev/null && read -t 2 -r line <&3 && echo "$line"' 2>/dev/null) && \
+     echo "$_banner" | grep -q "^SSH-"; then
     break
   fi
   if (( ELAPSED >= TIMEOUT )); then
-    log_error "Timed out waiting for WinRM after ${TIMEOUT}s."
+    log_error "Timed out waiting for SSH after ${TIMEOUT}s."
     exit 1
   fi
   sleep "$INTERVAL"
@@ -273,29 +282,33 @@ while true; do
 done
 
 if [[ "$FRESH_INSTALL" == true ]]; then
-  # WinRM opens early (step 2 of setup.ps1) — wait for SSH port as a better completion signal
-  log_step "WinRM is up — waiting for post-install to finish (SSH port ${HOST_SSH_PORT})..."
-  SSH_TIMEOUT=7200  # 2 hours for downloads/cleanup
-  SSH_ELAPSED=0
-  while true; do
-    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
-      log_error "QEMU process exited unexpectedly."
-      exit 1
-    fi
-    # Check for SSH banner (real service, not just QEMU port forward)
-    if ssh -o ConnectTimeout=2 -o BatchMode=yes -o StrictHostKeyChecking=no -p "$HOST_SSH_PORT" administrator@127.0.0.1 exit 2>&1 | grep -qi "permission denied\|authenticated"; then
-      break
-    fi
-    if (( SSH_ELAPSED >= SSH_TIMEOUT )); then
-      log_warn "Timed out waiting for SSH after ${SSH_TIMEOUT}s — setup may still be running."
-      break
-    fi
-    sleep "$INTERVAL"
-    SSH_ELAPSED=$((SSH_ELAPSED + INTERVAL))
-    log_dim "Post-install in progress... (${SSH_ELAPSED}s since WinRM came up)"
-  done
   echo ""
   log_ok "Windows installation complete!"
+
+  # Shut down the VM, create an overlay on top of the base, and reboot from overlay
+  log_step "Creating overlay snapshot..."
+  log_info "Shutting down VM to snapshot the base disk..."
+  kill "$QEMU_PID" 2>/dev/null
+  wait "$QEMU_PID" 2>/dev/null || true
+  # Remove trap temporarily — we handle cleanup manually here
+  trap - EXIT INT TERM
+
+  # Clean up virtiofsd/noVNC/pidfile from the initial run
+  if [[ -n "${NOVNC_PID:-}" ]]; then
+    kill "$NOVNC_PID" 2>/dev/null; wait "$NOVNC_PID" 2>/dev/null || true
+    unset NOVNC_PID
+  fi
+  if [[ -n "${VIRTIOFSD_PID:-}" ]]; then
+    kill "$VIRTIOFSD_PID" 2>/dev/null; wait "$VIRTIOFSD_PID" 2>/dev/null || true
+    unset VIRTIOFSD_PID
+  fi
+  rm -f "$PIDFILE" "$VIRTIOFSD_SOCK" /tmp/virtio-serial-wincore.sock
+
+  bash scripts/06-create-overlay.sh
+
+  log_info "Rebooting from overlay..."
+  FRESH_INSTALL=false
+  exec bash scripts/05-start-qemu.sh
   stamp_build
 else
   echo ""
@@ -303,7 +316,6 @@ else
 fi
 log_info "RDP:   localhost:${HOST_RDP_PORT}"
 log_info "SSH:   ssh administrator@localhost -p ${HOST_SSH_PORT}"
-log_info "WinRM: localhost:${HOST_WINRM_PORT}"
 log_info "VNC:   localhost:${VNC_PORT}"
 if [[ -n "${NOVNC_PID:-}" ]]; then
   log_info "Web:   http://localhost:${HOST_NOVNC_PORT}/vnc.html?autoconnect=true"

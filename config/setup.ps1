@@ -43,9 +43,9 @@ function RefreshPath {
   $env:PATH = "$machine;$user"
 }
 
-$total = 12
+$total = 11
 
-# --- 1. VirtIO guest tools (installs NetKVM network driver — must come before any downloads) ---
+# VirtIO guest tools (installs NetKVM network driver — must come before any downloads)
 Step 1 $total 'Installing VirtIO guest tools'
 $found = $false
 foreach ($d in 68..90) {
@@ -60,14 +60,8 @@ foreach ($d in 68..90) {
 }
 if (-not $found) { Log 'VirtIO MSI not found on any drive' }
 
-# --- 2. WinRM (needs network) ---
-Step 2 $total 'Enabling WinRM'
-winrm quickconfig -quiet -force 2>&1 | Out-File $log -Append
-winrm set winrm/config/service '@{AllowUnencrypted="true"}' 2>&1 | Out-File $log -Append
-winrm set winrm/config/service/auth '@{Basic="true"}' 2>&1 | Out-File $log -Append
-
-# --- 3. OpenSSH Server (GitHub release — capability/DISM unavailable on Server Core) ---
-Step 3 $total 'Installing OpenSSH Server'
+# OpenSSH Server (GitHub release — capability/DISM unavailable on Server Core)
+Step 2 $total 'Installing OpenSSH Server'
 if (-not (Get-Service sshd -EA SilentlyContinue)) {
   $sshZip = "$env:TEMP\openssh.zip"
   $sshUrl = 'https://github.com/PowerShell/Win32-OpenSSH/releases/latest/download/OpenSSH-Win64.zip'
@@ -106,7 +100,8 @@ if (-not (Get-Service sshd -EA SilentlyContinue)) {
 else {
   Log 'OpenSSH already installed'
 }
-# --- 3b. Deploy pre-generated SSH host keys (persistent fingerprints) ---
+
+# Deploy pre-generated SSH host keys (persistent fingerprints)
 $sshHostKeySrc = $null
 foreach ($d in 68..90) {
   $candidate = [char]$d + ':\ssh-hostkeys'
@@ -140,7 +135,7 @@ else {
   Log 'sshd not found after all install attempts'
 }
 
-# --- 3c. Deploy host SSH public key (if bundled in answer ISO) ---
+# Deploy host SSH public key (if bundled in answer ISO)
 $authKeySrc = $null
 foreach ($d in 68..90) {
   $candidate = [char]$d + ':\authorized_keys'
@@ -150,7 +145,6 @@ foreach ($d in 68..90) {
   }
 }
 if (-not $authKeySrc) {
-  # Also check the answer ISO label mount
   $candidate = 'A:\authorized_keys'
   if (Test-Path $candidate) { $authKeySrc = $candidate }
 }
@@ -167,8 +161,8 @@ else {
   Log 'No authorized_keys found on answer ISO, skipping SSH key deploy'
 }
 
-# --- 4. Install Chocolatey ---
-Step 4 $total 'Installing Chocolatey'
+# Install Chocolatey
+Step 3 $total 'Installing Chocolatey'
 try {
   Set-ExecutionPolicy Bypass -Scope Process -Force
   Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
@@ -179,8 +173,8 @@ catch {
   Log "ERROR: Chocolatey install failed: $_"
 }
 
-# --- 5. Install Git + Node.js via Chocolatey ---
-Step 5 $total 'Installing Git + Node.js'
+# Install Git + Node.js via Chocolatey
+Step 4 $total 'Installing Git + Node.js'
 if (Get-Command choco -EA SilentlyContinue) {
   choco install git nodejs-lts winfsp TotalCommander -y --no-progress 2>&1 | Out-File $log -Append
   RefreshPath
@@ -193,10 +187,10 @@ else {
   Log 'Chocolatey not available, skipping Git + Node.js'
 }
 
-# --- 6. Install VirtIO-FS driver and create mount service ---
-Step 6 $total 'Installing VirtIO-FS driver and creating mount service'
+# Install VirtIO-FS driver and create mount service
+Step 5 $total 'Installing VirtIO-FS driver and creating mount service'
 
-# Step 6a: Install viofs driver if needed
+# Install viofs driver if needed
 $viofsInf = $null
 foreach ($candidate in @(
   'C:\Program Files\Virtio-Win\VioFS\viofs.inf',
@@ -219,7 +213,7 @@ else {
   Log 'viofs.inf not found on any drive'
 }
 
-# Step 6b: Register virtiofs with WinFsp Launcher and mount Z:\
+# Register virtiofs with WinFsp Launcher and mount Z:\
 $virtiofsBin = $null
 foreach ($candidate in @(
   'C:\Program Files\Virtio-Win\VioFS\virtiofs.exe',
@@ -261,8 +255,8 @@ else {
   Log 'virtiofs.exe not found'
 }
 
-# --- 7. Configure Task Manager at logon (expanded mode) ---
-Step 7 $total 'Configuring Task Manager startup'
+# Configure Task Manager at logon (expanded mode)
+Step 6 $total 'Configuring Task Manager startup'
 reg add 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' /v TaskManager /t REG_SZ /d 'taskmgr.exe' /f 2>&1 | Out-File $log -Append
 # Default to expanded/details view instead of compact summary
 $tmKey = 'HKCU\Software\Microsoft\Windows\CurrentVersion\TaskManager'
@@ -275,8 +269,8 @@ if (Test-Path $tcExe) {
 }
 Log 'Task Manager set to launch at logon (expanded mode)'
 
-# --- 8. Disable unnecessary services ---
-Step 8 $total 'Disabling unnecessary services'
+# Disable unnecessary services
+Step 7 $total 'Disabling unnecessary services'
 $disableServices = @(
   'DiagTrack',            # Telemetry
   'UsoSvc',               # Update Orchestrator
@@ -300,8 +294,8 @@ foreach ($svc in $disableServices) {
   }
 }
 
-# --- 9. Disk cleanup (must run BEFORE Defender removal — that triggers pending reboot which blocks DISM) ---
-Step 9 $total 'Cleaning up disk'
+# Disk cleanup (must run BEFORE Defender removal — that triggers pending reboot which blocks DISM)
+Step 8 $total 'Cleaning up disk'
 # WinSxS component store (~1.3 GB)
 Dism /Online /Cleanup-Image /StartComponentCleanup /ResetBase 2>&1 | Out-File $log -Append
 Log "WinSxS cleanup done"
@@ -333,8 +327,8 @@ Log "Speech engines removed"
 Remove-Item 'C:\Program Files\Windows Defender Advanced Threat Protection' -Recurse -Force -EA SilentlyContinue
 Log "Defender ATP removed"
 
-# --- 10. Uninstall Windows Defender (~137 MB RAM, ~90 MB disk; requires reboot to fully remove) ---
-Step 10 $total 'Removing Windows Defender'
+# Uninstall Windows Defender (~137 MB RAM, ~90 MB disk; requires reboot to fully remove)
+Step 9 $total 'Removing Windows Defender'
 try {
   Uninstall-WindowsFeature Windows-Defender 2>&1 | Out-File $log -Append
   Log 'Windows Defender uninstalled (takes effect after reboot)'
@@ -343,8 +337,8 @@ catch {
   Log "Defender removal failed: $_"
 }
 
-# --- 11. Zero free space (allows qcow2 compaction on host) ---
-Step 11 $total 'Zeroing free space for disk compaction'
+# Zero free space (allows qcow2 compaction on host)
+Step 10 $total 'Zeroing free space for disk compaction'
 $zeroFile = 'C:\zero.tmp'
 try {
   # Write zeros to fill free space, then delete — makes qcow2 sparse regions detectable
@@ -363,8 +357,7 @@ finally {
 Remove-Item $zeroFile -Force -EA SilentlyContinue
 Log 'Free space zeroed'
 
-# --- 12. Done ---
-Step 12 $total 'Setup complete'
+# Done
+Step 11 $total 'Setup complete'
 Log 'All setup steps finished'
-# Write completion marker — host waits for this via WinRM before declaring "complete"
 Set-Content -Path 'C:\setup-complete.flag' -Value 'done'

@@ -12,8 +12,10 @@ Docker + QEMU project for running Windows Server Core with fully unattended inst
 - `scripts/03-gen-autounattend.sh` — renders Autounattend.xml from template via sed
 - `scripts/03b-gen-ssh-hostkeys.sh` — generates persistent SSH host keys (ed25519, rsa, ecdsa) in `images/ssh-hostkeys/`
 - `scripts/04-gen-answer-iso.sh` — bundles Autounattend.xml + setup.ps1 + SSH host keys into answer ISO (uses `genisoimage` or `mkisofs`)
-- `scripts/05-start-qemu.sh` — launches QEMU (+ virtiofsd on Linux) with VirtIO devices, waits for WinRM health check
+- `scripts/05-start-qemu.sh` — launches QEMU (+ virtiofsd on Linux) with VirtIO devices, waits for SSH banner; after fresh install, auto-creates overlay and reboots from it
+- `scripts/06-create-overlay.sh` — creates qcow2 overlay on top of base disk (all writes go to overlay, base stays pristine)
 - `scripts/_env.sh` — shared env loader, defaults, helper functions, `require_cmd` for dependency checks with install hints
+- `run.sh` — quick-start entry point: boots from overlay disk, supports `--reset` to discard changes
 - `config/Autounattend.xml.tpl` — unattended install template (windowsPE + specialize + oobeSystem)
 - `config/setup.ps1` — post-install script (runs at first logon via answer ISO)
 - `Dockerfile` — Ubuntu 24.04 base with QEMU, genisoimage, curl, netcat
@@ -23,15 +25,16 @@ Docker + QEMU project for running Windows Server Core with fully unattended inst
 - Config via `.env` file (see `.env.example`)
 - KVM auto-detected at runtime (`/dev/kvm`), falls back to TCG (always TCG on macOS)
 - macOS support: `mkisofs` (cdrtools) instead of `genisoimage`, `aio=threads` instead of `io_uring`, no VirtIO-FS, Screen Sharing for VNC
-- Default host ports: 13389 (RDP), 15985 (WinRM), 5900 (VNC), 2222 (SSH), 16080 (noVNC)
-- `images/` dir holds all artifacts (ISO, qcow2 disk, answer ISO, virtio ISO) — gitignored
+- Default host ports: 13389 (RDP), 5900 (VNC), 2222 (SSH), 16080 (noVNC)
+- `images/` dir holds all artifacts (ISO, qcow2 disk, overlay disk, answer ISO, virtio ISO) — gitignored
+- **Overlay disk**: `images/windows-overlay.qcow2` is a thin qcow2 backed by `images/windows.qcow2`. All runtime writes go to the overlay; `./run.sh --reset` deletes and recreates it for instant revert to post-install state
 - VirtIO devices: balloon (memory), serial (guest-host channel), virtio-fs (shared directory)
 - VirtIO-FS (Linux only): `virtiofsd` runs on host, shares `SHARED_DIR` (default `./shared`) → guest `Z:\` via `vhost-user-fs-pci`
 - On Linux with VirtIO-FS: QEMU uses `memory-backend-memfd` with `share=on` (required for vhost-user-fs); on macOS: plain memory
 - VirtIO-FS guest mount: `virtiofs.exe` is a WinFsp filesystem, NOT a plain Windows service. Requires `winfsp` package (installed via Chocolatey). Registered with WinFsp Launcher via `fsreg.bat` (`-d %2 -m %1`), mounted via `launchctl-x64.exe start virtiofs hostshare Z:`. A `VirtioFS-Mount` scheduled task (SYSTEM, at startup) handles auto-mount on boot.
 - OpenSSH Server: GitHub zip install (Add-WindowsCapability unavailable on Server Core)
 - SSH host keys: pre-generated at build time (`images/ssh-hostkeys/`), bundled in answer ISO, deployed to `%ProgramData%\ssh\` before sshd starts — fingerprints are stable across rebuilds (use `--clean` to regenerate)
-- Post-install (`setup.ps1`): WinRM, EMS/serial, VirtIO guest tools, viofs driver + mount, Chocolatey + Git + Node.js + WinFsp, then cleanup (Defender removal, service disable, WinSxS cleanup, temp/IME purge)
+- Post-install (`setup.ps1`): VirtIO guest tools, OpenSSH, viofs driver + mount, Chocolatey + Git + Node.js + WinFsp, then cleanup (Defender removal, service disable, WinSxS cleanup, temp/IME purge)
 - All setup steps log to `C:\setup.log` with timestamps and visible progress in VNC
 - `setup.ps1` is copied to `C:\` during specialize pass (answer ISO may be unmounted by first logon)
 

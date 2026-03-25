@@ -10,12 +10,12 @@ RUN apt-get update && apt-get install -y \
 COPY . /opt/winvm/
 WORKDIR /opt/winvm
 
-RUN chmod +x scripts/*.sh \
+RUN chmod +x run.sh build.sh scripts/*.sh \
     && ln -sf vnc.html /usr/share/novnc/index.html
 
 # images/ is volume-mounted at runtime (ISO, disk, answer ISO)
 VOLUME /opt/winvm/images
 
-EXPOSE 3389 5985 5900 6080 22
+EXPOSE 3389 5900 6080 22
 
 ENTRYPOINT ["bash", "scripts/build.sh"]

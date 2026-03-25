@@ -25,7 +25,6 @@ export RAM_MB="${RAM_MB:-4096}"
 export CPU_CORES="${CPU_CORES:-2}"
 export VNC_DISPLAY="${VNC_DISPLAY:-:0}"
 export HOST_RDP_PORT="${HOST_RDP_PORT:-13389}"
-export HOST_WINRM_PORT="${HOST_WINRM_PORT:-15985}"
 export HOST_SSH_PORT="${HOST_SSH_PORT:-2222}"
 export HOST_NOVNC_PORT="${HOST_NOVNC_PORT:-16080}"
 export SSH_PUBKEY="${SSH_PUBKEY:-}"
@@ -119,6 +118,7 @@ needs_rebuild() {
   # No stamp = disk exists from before stamp tracking, rebuild to be safe
   if [[ ! -f "$BUILD_STAMP" ]]; then
     log_warn "No build stamp found — wiping disk for fresh install."
+    rm -f images/windows-overlay.qcow2
     return 0
   fi
 
@@ -126,6 +126,7 @@ needs_rebuild() {
   for src in config/Autounattend.xml.tpl .env; do
     if [[ -f "$src" && "$src" -nt "$BUILD_STAMP" ]]; then
       log_warn "$src changed since last build — wiping disk for fresh install."
+      rm -f images/windows-overlay.qcow2
       return 0
     fi
   done

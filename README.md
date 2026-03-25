@@ -8,6 +8,7 @@ Out of the box, the VM comes pre-configured with:
 
 - **OpenSSH Server** — SSH into the VM from your terminal or attach a VS Code remote session
 - **Dev-ready** — Git, Node.js LTS, and Corepack pre-installed so you can `git clone` and start coding inside it
+- **Instant revert** — qcow2 overlay snapshotting: `./run.sh --reset` reverts the VM to its post-install state in seconds
 - **Lean image** — Defender removed, firewall disabled, WinSxS cleaned, free space zeroed for qcow2 compaction
 - **VirtIO guest tools** — optimized storage/network drivers and memory ballooning
 - **VirtIO-FS** — shared host directory mounted as `Z:\` in the guest (via WinFsp)
@@ -77,7 +78,6 @@ You can force a specific mode:
    - **Web console:** `http://localhost:16080` (Linux with noVNC installed)
    - **SSH:** `ssh administrator@localhost -p 2222`
    - **RDP:** `localhost:13389`
-   - **WinRM:** `localhost:15985`
 
 All ports are bound to `127.0.0.1` (localhost only).
 
@@ -98,7 +98,6 @@ All settings are in `.env` (see `.env.example`):
 | `CPU_CORES` | `2` | VM CPU cores |
 | `VNC_DISPLAY` | `:0` | VNC display number |
 | `HOST_RDP_PORT` | `13389` | Host port for RDP |
-| `HOST_WINRM_PORT` | `15985` | Host port for WinRM |
 | `HOST_SSH_PORT` | `2222` | Host port for SSH |
 | `HOST_NOVNC_PORT` | `16080` | Host port for noVNC web console |
 | `SHARED_DIR` | `./shared` | Host directory shared into guest as `Z:\` |
@@ -117,19 +116,31 @@ Set `SHARED_DIR` in `.env` to change the host path.
 
 > **Note:** VirtIO-FS requires `virtiofsd`, which is Linux-only. On macOS, shared directories are not available — use SCP or RDP file transfer instead.
 
-## Persistence
+## Persistence & Snapshots
 
-The `images/` directory holds the virtual disk and downloaded ISOs. In Docker mode, it's automatically volume-mounted so artifacts persist across container restarts. On subsequent runs, the VM boots from disk instead of reinstalling.
+After a fresh install, the build automatically creates a **qcow2 overlay** on top of the base disk. All runtime changes go to the overlay while the base image stays pristine.
+
+```bash
+# Quick-start the VM (boots from overlay)
+./run.sh
+
+# Discard all changes and revert to post-install state
+./run.sh --reset
+```
+
+The overlay is a thin qcow2 file backed by the base disk — creating or resetting it is instant.
+
+The `images/` directory holds the virtual disk, overlay, and downloaded ISOs. In Docker mode, it's automatically volume-mounted so artifacts persist across container restarts.
 
 ## Rebuilding
 
-To force a clean reinstall:
+To force a clean reinstall (wipes base disk + overlay):
 
 ```bash
 ./build.sh --clean
 ```
 
-This wipes the virtual disk and regenerated config, but preserves downloaded ISOs. Can be combined with `--host`/`--docker`.
+This wipes the virtual disk, overlay, and regenerated config, but preserves downloaded ISOs. Can be combined with `--host`/`--docker`.
 
 ## Performance Optimizations
 

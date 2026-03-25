@@ -179,7 +179,7 @@
       </RunSynchronous>
     </component>
 
-    <!-- Disable Windows Firewall for WinRM/SSH access -->
+    <!-- Disable Windows Firewall for SSH access -->
     <component name="Networking-MPSSVC-Svc"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -193,7 +193,7 @@
     </component>
   </settings>
 
-  <!-- === oobeSystem pass: admin password, skip OOBE, enable WinRM === -->
+  <!-- === oobeSystem pass: admin password, skip OOBE === -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"

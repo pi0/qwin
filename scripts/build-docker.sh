@@ -67,7 +67,6 @@ docker run --rm -d --name "$CONTAINER_NAME" \
   ${SSH_ARGS[@]+"${SSH_ARGS[@]}"} \
   -v "$PROJECT_ROOT/images:/opt/winvm/images" \
   -p "127.0.0.1:${HOST_RDP_PORT:-13389}:3389" \
-  -p "127.0.0.1:${HOST_WINRM_PORT:-15985}:5985" \
   -p "127.0.0.1:${HOST_SSH_PORT:-2222}:22" \
   -p "127.0.0.1:${HOST_VNC_PORT}:${VNC_PORT}" \
   -p "127.0.0.1:${HOST_NOVNC_PORT}:6080" \
