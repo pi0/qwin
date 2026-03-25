@@ -1,17 +1,21 @@
 # qwin
 
-Run Windows Server Core inside a Docker container using QEMU with fully unattended installation. Just provide an ISO and run.
+Windows Server Core in a container — zero-touch install, KVM-accelerated, ready to SSH in minutes.
 
 ## What's included
 
 Out of the box, the VM comes pre-configured with:
 
-- **OpenSSH Server** — enabled and started automatically
-- **WinRM** — configured for remote management
-- **VirtIO guest tools** — balloon memory, optimized storage/network drivers, serial channel
+- **OpenSSH Server** — SSH into the VM from your terminal or attach a VS Code remote session
+- **Dev-ready** — Git, Node.js LTS, and Corepack pre-installed so you can `git clone` and start coding inside it
+- **Lean image** — Defender removed, firewall disabled, WinSxS cleaned, free space zeroed for qcow2 compaction
+- **VirtIO guest tools** — optimized storage/network drivers and memory balooning
 - **VirtIO-FS** — shared host directory mounted as `Z:\` in the guest
-- **Git** and **Node.js LTS** — installed via Chocolatey
-- **Serial console (EMS)** — for headless debugging
+
+## Prerequisites
+
+- **Docker** (or a compatible runtime). On macOS, [OrbStack](https://orbstack.dev) is recommended.
+- **KVM** strongly recommended — install runs in ~20-30 min with KVM vs 2-4 hours without. Note: macOS runtimes don't expose nested KVM yet, so installs will use software emulation.
 
 ## Building the Image
 
