@@ -209,6 +209,7 @@ fi
 log_info "RDP:   localhost:${HOST_RDP_PORT}"
 log_info "SSH:   ssh administrator@localhost -p ${HOST_SSH_PORT}"
 log_info "WinRM: localhost:${HOST_WINRM_PORT}"
+log_info "VNC:   localhost:${VNC_PORT}"
 echo ""
 log_info "Press Ctrl+C to stop the VM."
 
