@@ -37,7 +37,7 @@ pkill -f "virtiofsd.*$VIRTIOFSD_SOCK" 2>/dev/null || true
 
 # Detect KVM
 ACCEL="tcg"
-CPU_MODEL="qemu64"
+CPU_MODEL="max"
 if [[ -e /dev/kvm ]]; then
   log_ok "KVM detected — using hardware acceleration."
   ACCEL="kvm"
