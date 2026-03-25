@@ -73,7 +73,7 @@ if [[ -z "$VIRTIOFSD" ]]; then
   VIRTIOFSD=$(command -v virtiofsd 2>/dev/null || true)
 fi
 
-if [[ -n "$VIRTIOFSD" ]]; then
+if [[ -n "$VIRTIOFSD" ]] && [[ "$ACCEL" == "kvm" ]]; then
   USE_VIRTIOFS=true
   mkdir -p "$SHARED_DIR"
 
@@ -103,6 +103,8 @@ if [[ -n "$VIRTIOFSD" ]]; then
     exit 1
   fi
   log_dim "virtiofsd PID: $VIRTIOFSD_PID"
+elif [[ -n "$VIRTIOFSD" ]] && [[ "$ACCEL" != "kvm" ]]; then
+  log_warn "VirtIO-FS disabled — vhost-user requires KVM (not available with TCG)."
 else
   log_warn "virtiofsd not found — shared directory (virtio-fs) disabled."
   case "$(uname -s)" in
@@ -170,9 +172,8 @@ QEMU_ARGS+=(
   # Network — virtio-net is faster than e1000; Windows Server 2022 has the driver
   -nic "user,model=virtio-net-pci,hostfwd=tcp::${HOST_RDP_PORT}-:3389,hostfwd=tcp::${HOST_SSH_PORT}-:22"
 
-  # Display — VGA at 1280x800, VNC for remote access
-  -vga none
-  -device VGA,xres=1280,yres=800
+  # Display — VNC for remote access
+  -vga std
   -display none
   -vnc "$VNC_DISPLAY"
   -serial stdio

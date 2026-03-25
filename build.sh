@@ -136,4 +136,15 @@ if [[ -d "$SHARED_DIR" ]]; then
   DOCKER_ARGS+=(-v "$(realpath "$SHARED_DIR"):/opt/winvm/shared")
 fi
 
+# Open noVNC in browser once the container is up
+_NOVNC_URL="http://localhost:${HOST_NOVNC_PORT:-16080}/vnc.html?autoconnect=true"
+(
+  sleep 3
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    open "$_NOVNC_URL"
+  elif command -v xdg-open &>/dev/null; then
+    xdg-open "$_NOVNC_URL"
+  fi
+) &>/dev/null &
+
 exec docker run "${DOCKER_ARGS[@]}" "$IMAGE_NAME" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
